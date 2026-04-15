@@ -1,8 +1,19 @@
 // 内容脚本：
 // 1) 监听页面划词
-// 2) 展示翻译卡片
+// 2) 展示翻译卡片（含朗读按钮）
 // 3) 点击收藏到单词本
 // 4) 根据单词本对页面高亮（简单基于文本节点替换，避免重排）
+// 5) 沉浸式段落翻译（手动开启，DeepL，跳过单词本中的单词）
+
+// ── TTS 朗读（英文） ──
+function speak(word) {
+  if (!window.speechSynthesis) return;
+  window.speechSynthesis.cancel();
+  const utter = new SpeechSynthesisUtterance(word);
+  utter.lang = 'en-US';
+  utter.rate = 0.85;
+  speechSynthesis.speak(utter);
+}
 
 let cardRoot = null;
 let lastSelectionText = '';
@@ -72,7 +83,10 @@ function showCard(x, y, word, translation, queryStats, inWordBook) {
     ? `<ul class="wh-explains">${dictEntries.map(e => `<li>${escapeHtml(e)}</li>`).join('')}</ul>` : '';
 
   cardRoot.innerHTML = `
-    <div class="wh-title">${escapeHtml(word)}${typeTag}</div>
+    <div class="wh-title">
+      ${escapeHtml(word)}${typeTag}
+      <button id="wh-speak" class="wh-speak-btn" title="朗读">🔊</button>
+    </div>
     <div class="wh-query-stats">查询次数: ${queryCount} 次</div>
     ${phoneticHtml}
     ${chineseHtml}
@@ -82,7 +96,12 @@ function showCard(x, y, word, translation, queryStats, inWordBook) {
     </div>
   `;
   document.body.appendChild(cardRoot);
-  
+
+  document.getElementById('wh-speak')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    speak(word);
+  });
+
   if (inWordBook) {
     // 熟悉按钮事件处理
     document.getElementById('wh-familiar').addEventListener('click', async () => {
@@ -241,6 +260,145 @@ function escapeRegex(s) {
 
 // 初始高亮
 highlightWordsOnPage();
+
+// ── 沉浸式翻译引擎 ──
+const PARA_SELECTORS = 'p, h1, h2, h3, h4, h5, h6, li, blockquote';
+const IMMERSIVE_ATTR = 'data-wh-translated';
+const IMMERSIVE_CLASS = 'wh-immersive-block';
+const MAX_CONCURRENT = 3;
+
+let immersiveEnabled = false;
+let wordBookSet = new Set();   // 单词本中的词（小写），跳过翻译
+let translateQueue = [];
+let activeRequests = 0;
+let iObserver = null;   // IntersectionObserver
+let mObserver = null;   // MutationObserver
+
+async function refreshWordBookSet() {
+  const { ok, data } = await chrome.runtime.sendMessage({ type: 'GET_WORD_BOOK' });
+  if (ok) wordBookSet = new Set(Object.keys(data || {}).map(w => w.toLowerCase().trim()));
+}
+
+function shouldSkip(el) {
+  // 已处理过
+  if (el.hasAttribute(IMMERSIVE_ATTR)) return true;
+  // 本身是翻译块
+  if (el.classList.contains(IMMERSIVE_CLASS)) return true;
+  // 在代码/脚本/导航等区域内
+  if (el.closest('nav, code, pre, script, style, noscript, [contenteditable], .word-helper-card')) return true;
+  const text = el.textContent.trim();
+  // 太短
+  if (!text || text.length < 15) return true;
+  // 整段内容就是单词本中的某个词（高亮展示即可，无需翻译）
+  if (wordBookSet.has(text.toLowerCase())) return true;
+  return false;
+}
+
+function enqueue(el) {
+  if (shouldSkip(el) || translateQueue.includes(el)) return;
+  el.setAttribute(IMMERSIVE_ATTR, 'pending');
+  translateQueue.push(el);
+  drain();
+}
+
+function drain() {
+  while (activeRequests < MAX_CONCURRENT && translateQueue.length > 0) {
+    const el = translateQueue.shift();
+    if (!el.isConnected || el.getAttribute(IMMERSIVE_ATTR) !== 'pending') continue;
+    activeRequests++;
+    translateEl(el).finally(() => { activeRequests--; drain(); });
+  }
+}
+
+async function translateEl(el) {
+  const text = el.textContent.trim();
+  if (!text || text.length < 15) { el.removeAttribute(IMMERSIVE_ATTR); return; }
+
+  // 插入加载占位
+  const loading = document.createElement('div');
+  loading.className = `${IMMERSIVE_CLASS} ${IMMERSIVE_CLASS}--loading`;
+  loading.textContent = '翻译中…';
+  el.after(loading);
+
+  try {
+    const { ok, data } = await chrome.runtime.sendMessage({
+      type: 'TRANSLATE_PARAGRAPH',
+      payload: { text }
+    });
+    loading.remove();
+    if (ok && data?.translation) {
+      el.setAttribute(IMMERSIVE_ATTR, 'done');
+      const block = document.createElement('div');
+      block.className = IMMERSIVE_CLASS;
+      block.textContent = data.translation;
+      el.after(block);
+    } else {
+      el.removeAttribute(IMMERSIVE_ATTR);
+    }
+  } catch (_) {
+    loading.remove();
+    el.removeAttribute(IMMERSIVE_ATTR);
+  }
+}
+
+function startImmersive() {
+  immersiveEnabled = true;
+
+  // 视口内优先翻译，向下预加载 300px
+  iObserver = new IntersectionObserver((entries) => {
+    for (const entry of entries) {
+      if (entry.isIntersecting) {
+        iObserver.unobserve(entry.target);
+        enqueue(entry.target);
+      }
+    }
+  }, { rootMargin: '0px 0px 300px 0px' });
+
+  document.querySelectorAll(PARA_SELECTORS).forEach(el => {
+    if (!shouldSkip(el)) iObserver.observe(el);
+  });
+
+  // 监听动态新增段落（SPA 等）
+  mObserver = new MutationObserver((mutations) => {
+    for (const m of mutations) {
+      for (const node of m.addedNodes) {
+        if (node.nodeType !== 1) continue;
+        if (node.matches?.(PARA_SELECTORS)) { iObserver.observe(node); }
+        node.querySelectorAll?.(PARA_SELECTORS).forEach(el => iObserver.observe(el));
+      }
+    }
+  });
+  mObserver.observe(document.body, { childList: true, subtree: true });
+}
+
+function stopImmersive() {
+  immersiveEnabled = false;
+  translateQueue = [];
+  iObserver?.disconnect(); iObserver = null;
+  mObserver?.disconnect(); mObserver = null;
+  document.querySelectorAll(`.${IMMERSIVE_CLASS}`).forEach(el => el.remove());
+  document.querySelectorAll(`[${IMMERSIVE_ATTR}]`).forEach(el => el.removeAttribute(IMMERSIVE_ATTR));
+}
+
+// 监听 popup 发来的开关指令
+chrome.runtime.onMessage.addListener((message) => {
+  if (message.type === 'TOGGLE_IMMERSIVE') {
+    if (message.payload.enabled) {
+      refreshWordBookSet().then(startImmersive);
+    } else {
+      stopImmersive();
+    }
+  }
+});
+
+// 页面加载时检查是否已开启沉浸翻译
+(async () => {
+  const { ok, data } = await chrome.runtime.sendMessage({ type: 'GET_SETTINGS' });
+  if (ok && data?.immersiveTranslation) {
+    await refreshWordBookSet();
+    startImmersive();
+  }
+})();
 
 // 渐变主题集合 & 选择器
 const GRADIENTS = [

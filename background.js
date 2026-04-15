@@ -135,6 +135,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         sendResponse({ ok: true, data: { words: book, dailyStats } });
         return;
       }
+      case 'TRANSLATE_PARAGRAPH': {
+        const translation = await translateWithDeepL(message.payload.text);
+        if (translation) {
+          sendResponse({ ok: true, data: { translation } });
+        } else {
+          sendResponse({ ok: false, error: 'TRANSLATION_FAILED' });
+        }
+        return;
+      }
       default:
         sendResponse({ ok: false, error: 'UNKNOWN_MESSAGE' });
     }
@@ -350,6 +359,35 @@ function bufferToHex(buffer) {
   return hex;
 }
 // ===================== 腾讯云 TMT 集成结束 =====================
+
+// ===================== DeepL 段落翻译 =====================
+async function translateWithDeepL(text) {
+  const cfg = await loadLocalConfig();
+  const apiKey = cfg?.deepl?.apiKey || '';
+  if (!apiKey) return null;
+
+  // 免费版 key 以 :fx 结尾，使用 api-free 域名；付费版使用 api.deepl.com
+  const endpoint = apiKey.endsWith(':fx')
+    ? 'https://api-free.deepl.com/v2/translate'
+    : 'https://api.deepl.com/v2/translate';
+
+  try {
+    const resp = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        'Authorization': `DeepL-Auth-Key ${apiKey}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ text: [text], target_lang: 'ZH' })
+    });
+    if (!resp.ok) return null;
+    const data = await resp.json();
+    return data?.translations?.[0]?.text || null;
+  } catch (_) {
+    return null;
+  }
+}
+// ===================== DeepL 集成结束 =====================
 
 async function getWordBook() {
   const { [STORAGE_KEYS.WORD_BOOK]: book } = await chrome.storage.local.get(STORAGE_KEYS.WORD_BOOK);
