@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>单词复习 - 每日一词</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #333;
+        }
+
+        .container {
+            max-width: 600px;
+            width: 90%;
+            text-align: center;
+        }
+
+        .header {
+            margin-bottom: 40px;
+        }
+
+        .header h1 {
+            color: white;
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+            font-weight: 300;
+        }
+
+        .header p {
+            color: rgba(255, 255, 255, 0.8);
+            font-size: 1.1rem;
+        }
+
+        .review-card {
+            background: white;
+            border-radius: 20px;
+            padding: 40px;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+            margin-bottom: 30px;
+            transform: translateY(0);
+            transition: all 0.3s ease;
+        }
+
+        .review-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 25px 50px rgba(0, 0, 0, 0.15);
+        }
+
+        .word {
+            font-size: 3rem;
+            font-weight: bold;
+            color: #667eea;
+            margin-bottom: 20px;
+            letter-spacing: 2px;
+        }
+
+        .definition {
+            font-size: 1.3rem;
+            color: #666;
+            line-height: 1.6;
+            margin-bottom: 30px;
+            opacity: 0;
+            transform: translateY(20px);
+            transition: all 0.3s ease;
+        }
+
+        .definition.show {
+            opacity: 1;
+            transform: translateY(0);
+        }
+
+        .buttons {
+            display: flex;
+            gap: 20px;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+
+        .btn {
+            padding: 15px 30px;
+            border: none;
+            border-radius: 50px;
+            font-size: 1.1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            min-width: 120px;
+        }
+
+        .btn-show {
+            background: #667eea;
+            color: white;
+        }
+
+        .btn-show:hover {
+            background: #5a6fd8;
+            transform: translateY(-2px);
+        }
+
+        .btn-correct {
+            background: #4CAF50;
+            color: white;
+        }
+
+        .btn-correct:hover {
+            background: #45a049;
+            transform: translateY(-2px);
+        }
+
+        .btn-wrong {
+            background: #f44336;
+            color: white;
+        }
+
+        .btn-wrong:hover {
+            background: #da190b;
+            transform: translateY(-2px);
+        }
+
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none !important;
+        }
+
+        .stats {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 15px;
+            padding: 20px;
+            color: white;
+            margin-bottom: 20px;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+            gap: 15px;
+            text-align: center;
+        }
+
+        .stat-item {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 10px;
+            padding: 15px;
+        }
+
+        .stat-value {
+            font-size: 1.5rem;
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+
+        .stat-label {
+            font-size: 0.9rem;
+            opacity: 0.8;
+        }
+
+        .no-words {
+            background: white;
+            border-radius: 20px;
+            padding: 40px;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+        }
+
+        .no-words h2 {
+            color: #667eea;
+            margin-bottom: 15px;
+        }
+
+        .no-words p {
+            color: #666;
+            font-size: 1.1rem;
+            line-height: 1.6;
+        }
+
+        .loading {
+            color: white;
+            font-size: 1.2rem;
+        }
+
+        .progress {
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 10px;
+            height: 8px;
+            margin: 20px 0;
+            overflow: hidden;
+        }
+
+        .progress-bar {
+            background: white;
+            height: 100%;
+            border-radius: 10px;
+            transition: width 0.3s ease;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>📚 每日单词复习</h1>
+            <p>基于记忆曲线的智能复习系统</p>
+        </div>
+
+        <div id="loading" class="loading">
+            正在加载待复习单词...
+        </div>
+
+        <div id="stats" class="stats" style="display: none;">
+            <div class="stats-grid">
+                <div class="stat-item">
+                    <div class="stat-value" id="total-words">0</div>
+                    <div class="stat-label">总单词数</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-value" id="review-words">0</div>
+                    <div class="stat-label">待复习</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-value" id="mastered-words">0</div>
+                    <div class="stat-label">已掌握</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-value" id="accuracy-rate">0%</div>
+                    <div class="stat-label">正确率</div>
+                </div>
+            </div>
+            <div class="progress">
+                <div class="progress-bar" id="progress-bar" style="width: 0%"></div>
+            </div>
+        </div>
+
+        <div id="review-card" class="review-card" style="display: none;">
+            <div class="word" id="current-word">Loading...</div>
+            <div class="definition" id="current-definition">定义将在这里显示</div>
+            
+            <div class="buttons">
+                <button class="btn btn-show" id="show-btn">显示释义</button>
+                <button class="btn btn-correct" id="correct-btn" style="display: none;">记住了 ✓</button>
+                <button class="btn btn-wrong" id="wrong-btn" style="display: none;">没记住 ✗</button>
+            </div>
+        </div>
+
+        <div id="no-words" class="no-words" style="display: none;">
+            <h2>🎉 太棒了！</h2>
+            <p>今天没有需要复习的单词。<br>继续保持学习的好习惯，明天再来复习吧！</p>
+        </div>
+    </div>
+
+    <script src="newtab.js"></script>
+</body>
+</html>

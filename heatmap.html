@@ -1,0 +1,395 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>单词助手 - 学习热力图</title>
+    <style>
+      /* iOS 18 风格：柔和色彩、毛玻璃、圆角卡片、渐变标题 */
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      
+      body { 
+        max-width: 1200px; 
+        margin: 0 auto; 
+        font-family: ui-rounded, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+        background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+        min-height: 100vh;
+        padding: 20px;
+      }
+      
+      .container {
+        background: rgba(255, 255, 255, 0.95);
+        backdrop-filter: blur(20px);
+        border-radius: 20px;
+        box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+        overflow: hidden;
+      }
+      
+      header { 
+        padding: 20px 24px; 
+        background: linear-gradient(135deg, #a18cd1, #fbc2eb); 
+        color: #fff;
+        border-bottom: 0;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+      }
+      
+      header h1 { 
+        font-size: 24px; 
+        font-weight: 700; 
+        letter-spacing: 0.3px; 
+        margin: 0;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+      
+      .back-btn {
+        background: rgba(255, 255, 255, 0.2);
+        border: none;
+        color: white;
+        padding: 8px 16px;
+        border-radius: 12px;
+        cursor: pointer;
+        font-size: 14px;
+        font-weight: 500;
+        transition: all 0.3s ease;
+      }
+      
+      .back-btn:hover {
+        background: rgba(255, 255, 255, 0.3);
+        transform: translateY(-1px);
+      }
+      
+      .content {
+        padding: 24px;
+      }
+      
+      .stats-overview {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 16px;
+        margin-bottom: 32px;
+      }
+      
+      .stat-card {
+        background: rgba(255, 255, 255, 0.7);
+        backdrop-filter: blur(12px);
+        border-radius: 16px;
+        padding: 20px;
+        border: 1px solid rgba(255, 255, 255, 0.3);
+        text-align: center;
+      }
+      
+      .stat-number {
+        font-size: 32px;
+        font-weight: 700;
+        color: #667eea;
+        margin-bottom: 8px;
+      }
+      
+      .stat-label {
+        font-size: 14px;
+        color: #666;
+        font-weight: 500;
+      }
+      
+      .heatmap-section {
+        background: rgba(255, 255, 255, 0.7);
+        backdrop-filter: blur(12px);
+        border-radius: 16px;
+        padding: 24px;
+        border: 1px solid rgba(255, 255, 255, 0.3);
+      }
+      
+      .heatmap-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 20px;
+      }
+      
+      .heatmap-title {
+        font-size: 18px;
+        font-weight: 600;
+        color: #333;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      
+      .year-selector {
+        padding: 8px 12px;
+        border: 1px solid rgba(0,0,0,0.08);
+        border-radius: 12px;
+        background: rgba(255,255,255,0.9);
+        font-size: 14px;
+        cursor: pointer;
+      }
+      
+      .heatmap-container {
+        overflow-x: auto;
+        padding: 10px 0;
+      }
+      
+      .heatmap {
+        display: inline-block;
+        min-width: 800px;
+      }
+      
+      .months {
+        display: flex;
+        margin-bottom: 8px;
+        padding-left: 30px;
+      }
+      
+      .month {
+        flex: 1;
+        font-size: 12px;
+        color: #666;
+        text-align: center;
+        min-width: 60px;
+      }
+      
+      .heatmap-grid {
+        display: flex;
+        gap: 2px;
+      }
+      
+      .weekdays {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        margin-right: 8px;
+      }
+      
+      .weekday {
+        height: 12px;
+        font-size: 10px;
+        color: #666;
+        display: flex;
+        align-items: center;
+        width: 20px;
+      }
+      
+      .weeks {
+        display: flex;
+        gap: 2px;
+      }
+      
+      .week {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+      }
+      
+      .day {
+        width: 12px;
+        height: 12px;
+        border-radius: 2px;
+        cursor: pointer;
+        transition: all 0.2s ease;
+        position: relative;
+      }
+      
+      .day:hover {
+        transform: scale(1.2);
+        border: 1px solid #333;
+      }
+      
+      /* 热力图颜色等级 */
+      .day.level-0 { background-color: #ebedf0; }
+      .day.level-1 { background-color: #c6e48b; }
+      .day.level-2 { background-color: #7bc96f; }
+      .day.level-3 { background-color: #239a3b; }
+      .day.level-4 { background-color: #196127; }
+      
+      .legend {
+        display: flex;
+        align-items: center;
+        justify-content: flex-end;
+        gap: 8px;
+        margin-top: 16px;
+        font-size: 12px;
+        color: #666;
+      }
+      
+      .legend-item {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+      }
+      
+      .legend-color {
+        width: 12px;
+        height: 12px;
+        border-radius: 2px;
+      }
+      
+      .tooltip {
+        position: absolute;
+        background: rgba(0, 0, 0, 0.8);
+        color: white;
+        padding: 8px 12px;
+        border-radius: 8px;
+        font-size: 12px;
+        pointer-events: none;
+        z-index: 1000;
+        white-space: nowrap;
+        opacity: 0;
+        transition: opacity 0.2s ease;
+      }
+      
+      .tooltip.show {
+        opacity: 1;
+      }
+      
+      .loading {
+        text-align: center;
+        padding: 40px;
+        color: #666;
+        font-size: 16px;
+      }
+      
+      .error {
+        text-align: center;
+        padding: 40px;
+        color: #e74c3c;
+        font-size: 16px;
+      }
+      
+      .word-list {
+        margin-top: 20px;
+        padding: 16px;
+        background: rgba(255, 255, 255, 0.5);
+        border-radius: 12px;
+        display: none;
+      }
+      
+      .word-list h4 {
+        margin-bottom: 12px;
+        color: #333;
+        font-size: 14px;
+        font-weight: 600;
+      }
+      
+      .words {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+      
+      .word-tag {
+        background: linear-gradient(135deg, #667eea, #764ba2);
+        color: white;
+        padding: 4px 8px;
+        border-radius: 8px;
+        font-size: 12px;
+        font-weight: 500;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <header>
+        <h1>📊 学习热力图</h1>
+        <button class="back-btn" onclick="window.close()">返回</button>
+      </header>
+      <div class="content">
+        <div class="stats-overview">
+          <div class="stat-card">
+            <div class="stat-number" id="totalWords">0</div>
+            <div class="stat-label">总单词数</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-number" id="thisWeek">0</div>
+            <div class="stat-label">本周新增</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-number" id="thisMonth">0</div>
+            <div class="stat-label">本月新增</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-number" id="longestStreak">0</div>
+            <div class="stat-label">最长连续天数</div>
+          </div>
+        </div>
+        
+        <div class="heatmap-section">
+          <div class="heatmap-header">
+            <h3 class="heatmap-title">🔥 学习活跃度</h3>
+            <select class="year-selector" id="yearSelector">
+              <option value="2024">2024年</option>
+            </select>
+          </div>
+          
+          <div id="loadingState" class="loading">
+            正在加载数据...
+          </div>
+          
+          <div id="errorState" class="error" style="display: none;">
+            加载数据失败，请重试
+          </div>
+          
+          <div id="heatmapContainer" class="heatmap-container" style="display: none;">
+            <div class="heatmap">
+              <div class="months" id="monthsRow">
+                <!-- 月份标签将由JavaScript生成 -->
+              </div>
+              <div class="heatmap-grid">
+                <div class="weekdays">
+                  <div class="weekday"></div>
+                  <div class="weekday">一</div>
+                  <div class="weekday"></div>
+                  <div class="weekday">三</div>
+                  <div class="weekday"></div>
+                  <div class="weekday">五</div>
+                  <div class="weekday"></div>
+                </div>
+                <div class="weeks" id="weeksContainer">
+                  <!-- 热力图网格将由JavaScript生成 -->
+                </div>
+              </div>
+            </div>
+            
+            <div class="legend">
+              <span>少</span>
+              <div class="legend-item">
+                <div class="legend-color level-0"></div>
+              </div>
+              <div class="legend-item">
+                <div class="legend-color level-1"></div>
+              </div>
+              <div class="legend-item">
+                <div class="legend-color level-2"></div>
+              </div>
+              <div class="legend-item">
+                <div class="legend-color level-3"></div>
+              </div>
+              <div class="legend-item">
+                <div class="legend-color level-4"></div>
+              </div>
+              <span>多</span>
+            </div>
+          </div>
+          
+          <div class="word-list" id="wordList">
+            <h4 id="wordListTitle">今日学习的单词</h4>
+            <div class="words" id="wordsContainer">
+              <!-- 单词标签将由JavaScript生成 -->
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    
+    <div class="tooltip" id="tooltip"></div>
+    
+    <script src="heatmap.js"></script>
+  </body>
+</html>

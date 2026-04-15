@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>单词复习 - 单词助手</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #333;
+        }
+
+        .container {
+            max-width: 600px;
+            width: 90%;
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(20px);
+            border-radius: 20px;
+            padding: 40px;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+            text-align: center;
+        }
+
+        .header {
+            margin-bottom: 30px;
+        }
+
+        .header h1 {
+            font-size: 2.5rem;
+            font-weight: 700;
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 10px;
+        }
+
+        .stats {
+            display: flex;
+            justify-content: space-around;
+            margin-bottom: 30px;
+            padding: 20px;
+            background: rgba(102, 126, 234, 0.1);
+            border-radius: 15px;
+        }
+
+        .stat-item {
+            text-align: center;
+        }
+
+        .stat-number {
+            font-size: 2rem;
+            font-weight: 700;
+            color: #667eea;
+            display: block;
+        }
+
+        .stat-label {
+            font-size: 0.9rem;
+            color: #666;
+            margin-top: 5px;
+        }
+
+        .loading {
+            display: none;
+            padding: 40px;
+            font-size: 1.2rem;
+            color: #666;
+        }
+
+        .loading.show {
+            display: block;
+        }
+
+        .review-card {
+            display: none;
+            background: white;
+            border-radius: 15px;
+            padding: 30px;
+            margin: 20px 0;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
+        }
+
+        .review-card.show {
+            display: block;
+        }
+
+        .word {
+            font-size: 3rem;
+            font-weight: 700;
+            color: #333;
+            margin-bottom: 20px;
+            letter-spacing: 2px;
+        }
+
+        .definition {
+            font-size: 1.3rem;
+            color: #666;
+            line-height: 1.6;
+            margin-bottom: 30px;
+            opacity: 0;
+            transform: translateY(20px);
+            transition: all 0.3s ease;
+        }
+
+        .definition.show {
+            opacity: 1;
+            transform: translateY(0);
+        }
+
+        .buttons {
+            display: flex;
+            gap: 15px;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+
+        .btn {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 25px;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            min-width: 120px;
+        }
+
+        .btn-show {
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            color: white;
+        }
+
+        .btn-show:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(102, 126, 234, 0.3);
+        }
+
+        .btn-correct {
+            background: linear-gradient(135deg, #56ab2f, #a8e6cf);
+            color: white;
+            display: none;
+        }
+
+        .btn-correct:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(86, 171, 47, 0.3);
+        }
+
+        .btn-wrong {
+            background: linear-gradient(135deg, #ff6b6b, #ffa8a8);
+            color: white;
+            display: none;
+        }
+
+        .btn-wrong:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(255, 107, 107, 0.3);
+        }
+
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none !important;
+        }
+
+        .no-words {
+            display: none;
+            padding: 40px;
+            text-align: center;
+        }
+
+        .no-words.show {
+            display: block;
+        }
+
+        .no-words h2 {
+            font-size: 2rem;
+            color: #667eea;
+            margin-bottom: 15px;
+        }
+
+        .no-words p {
+            font-size: 1.1rem;
+            color: #666;
+            line-height: 1.6;
+        }
+
+        .progress {
+            margin-top: 20px;
+            font-size: 1rem;
+            color: #666;
+        }
+
+        .keyboard-hint {
+            margin-top: 20px;
+            font-size: 0.9rem;
+            color: #999;
+            font-style: italic;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .fade-in {
+            animation: fadeIn 0.5s ease;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>单词复习</h1>
+            <div class="stats">
+                <div class="stat-item">
+                    <span class="stat-number" id="totalWords">0</span>
+                    <div class="stat-label">待复习</div>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-number" id="reviewedWords">0</span>
+                    <div class="stat-label">已复习</div>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-number" id="correctRate">0%</span>
+                    <div class="stat-label">正确率</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="loading" id="loading">
+            <div>正在加载复习单词...</div>
+        </div>
+
+        <div class="review-card" id="reviewCard">
+            <div class="word" id="currentWord"></div>
+            <div class="definition" id="currentDefinition"></div>
+            <div class="buttons">
+                <button class="btn btn-show" id="showBtn">显示释义</button>
+                <button class="btn btn-correct" id="correctBtn">记住了</button>
+                <button class="btn btn-wrong" id="wrongBtn">没记住</button>
+            </div>
+            <div class="progress" id="progress"></div>
+            <div class="keyboard-hint">
+                提示：按空格键显示释义，按 ← 表示没记住，按 → 表示记住了
+            </div>
+        </div>
+
+        <div class="no-words" id="noWords">
+            <h2>🎉 太棒了！</h2>
+            <p>暂时没有需要复习的单词。<br>继续学习新单词，或者稍后再来复习吧！</p>
+        </div>
+    </div>
+
+    <script src="review.js"></script>
+</body>
+</html>

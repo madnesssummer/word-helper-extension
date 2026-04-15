@@ -1,0 +1,68 @@
+/* iOS 18 风格：毛玻璃 + 柔和阴影 + 圆角 + 渐变 */
+.word-helper-card {
+  --wh-gradient: linear-gradient(135deg, #7F7FD5 0%, #86A8E7 50%, #91EAE4 100%);
+  position: fixed;
+  z-index: 2147483647;
+  max-width: 360px;
+  min-width: 240px;
+  color: #fff;
+  background: var(--wh-gradient);
+  border: 1px solid rgba(255,255,255,0.35);
+  box-shadow: 0 20px 40px rgba(0,0,0,0.25), 0 1px 0 rgba(255,255,255,0.3) inset;
+  border-radius: 18px;
+  padding: 14px 16px;
+  backdrop-filter: saturate(180%) blur(20px);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  font-family: ui-rounded, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+  transform-origin: top left;
+  animation: wh-pop 220ms cubic-bezier(.2,.7,.3,1) both;
+}
+.word-helper-card .wh-title { font-size: 18px; font-weight: 700; letter-spacing: 0.2px; margin-bottom: 6px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.word-helper-card .wh-type-tag { font-size: 10px; font-weight: 600; background: rgba(255,255,255,0.25); border: 1px solid rgba(255,255,255,0.4); border-radius: 6px; padding: 2px 6px; letter-spacing: 0.5px; flex-shrink: 0; }
+.word-helper-card .wh-query-stats { font-size: 11px; color: rgba(255,255,255,0.75); margin-bottom: 6px; font-weight: 500; }
+.word-helper-card .wh-phonetic { font-size: 12px; color: rgba(255,255,255,0.85); margin-bottom: 8px; }
+.word-helper-card .wh-zh-translation { font-size: 15px; font-weight: 600; color: #fff; margin-bottom: 8px; padding: 5px 9px; background: rgba(255,255,255,0.18); border-radius: 8px; }
+.word-helper-card .wh-explains { margin: 0; padding-left: 18px; }
+.word-helper-card .wh-explains li { margin: 4px 0; font-size: 12px; color: rgba(255,255,255,0.85); }
+.word-helper-card .wh-actions { margin-top: 12px; display: flex; justify-content: flex-end; gap: 8px; }
+.word-helper-card button {
+  background: rgba(255,255,255,0.16);
+  color: #fff;
+  border: 1px solid rgba(255,255,255,0.35);
+  border-radius: 12px;
+  padding: 8px 12px;
+  cursor: pointer;
+  transition: background 160ms ease, transform 80ms ease;
+}
+.word-helper-card button:hover { background: rgba(255,255,255,0.22); }
+.word-helper-card button:active { transform: scale(0.98); }
+.word-helper-card .wh-familiar-btn {
+  background: rgba(255, 193, 7, 0.2);
+  border: 1px solid rgba(255, 193, 7, 0.5);
+  color: #fff;
+}
+.word-helper-card .wh-familiar-btn:hover {
+  background: rgba(255, 193, 7, 0.3);
+}
+
+mark.word-helper-highlight { background: rgba(255, 234, 167, 0.9); padding: 0 3px; border-radius: 4px; }
+
+@keyframes wh-pop {
+  0%   { opacity: 0; transform: translateY(8px) scale(0.96); }
+  60%  { transform: translateY(-2px) scale(1.01); }
+  100% { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes wh-dismiss {
+  0%   { opacity: 1; transform: translateY(0) scale(1); }
+  100% { opacity: 0; transform: translateY(6px) scale(0.96); }
+}
+.word-helper-card.dismissing {
+  animation: wh-dismiss 180ms cubic-bezier(.4,0,1,1) both;
+  pointer-events: none;
+}
+.word-helper-card button {
+  transition: background 160ms ease, transform 100ms ease, box-shadow 160ms ease;
+}
+.word-helper-card button:hover { background: rgba(255,255,255,0.28); box-shadow: 0 2px 8px rgba(0,0,0,0.15); }
+.word-helper-card button:active { transform: scale(0.93); }
+

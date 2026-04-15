@@ -1,0 +1,536 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>单词助手 - 学习热力图 (预览)</title>
+    <style>
+      /* iOS 18 风格：柔和色彩、毛玻璃、圆角卡片、渐变标题 */
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      
+      body { 
+        max-width: 1200px; 
+        margin: 0 auto; 
+        font-family: ui-rounded, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+        background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+        min-height: 100vh;
+        padding: 20px;
+      }
+      
+      .container {
+        background: rgba(255, 255, 255, 0.95);
+        backdrop-filter: blur(20px);
+        border-radius: 20px;
+        box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+        overflow: hidden;
+      }
+      
+      header { 
+        padding: 20px 24px; 
+        background: linear-gradient(135deg, #a18cd1, #fbc2eb); 
+        color: #fff;
+        border-bottom: 0;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+      }
+      
+      header h1 { 
+        font-size: 24px; 
+        font-weight: 700; 
+        letter-spacing: 0.3px; 
+        margin: 0;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+      
+      .back-btn {
+        background: rgba(255, 255, 255, 0.2);
+        border: none;
+        color: white;
+        padding: 8px 16px;
+        border-radius: 12px;
+        cursor: pointer;
+        font-size: 14px;
+        font-weight: 500;
+        transition: all 0.3s ease;
+      }
+      
+      .back-btn:hover {
+        background: rgba(255, 255, 255, 0.3);
+        transform: translateY(-1px);
+      }
+      
+      .content {
+        padding: 24px;
+      }
+      
+      .stats-overview {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 16px;
+        margin-bottom: 32px;
+      }
+      
+      .stat-card {
+        background: rgba(255, 255, 255, 0.7);
+        backdrop-filter: blur(12px);
+        border-radius: 16px;
+        padding: 20px;
+        border: 1px solid rgba(255, 255, 255, 0.3);
+        text-align: center;
+      }
+      
+      .stat-number {
+        font-size: 32px;
+        font-weight: 700;
+        color: #667eea;
+        margin-bottom: 8px;
+      }
+      
+      .stat-label {
+        font-size: 14px;
+        color: #666;
+        font-weight: 500;
+      }
+      
+      .heatmap-section {
+        background: rgba(255, 255, 255, 0.7);
+        backdrop-filter: blur(12px);
+        border-radius: 16px;
+        padding: 24px;
+        border: 1px solid rgba(255, 255, 255, 0.3);
+      }
+      
+      .heatmap-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 20px;
+      }
+      
+      .heatmap-title {
+        font-size: 18px;
+        font-weight: 600;
+        color: #333;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      
+      .year-selector {
+        padding: 8px 12px;
+        border: 1px solid rgba(0,0,0,0.08);
+        border-radius: 12px;
+        background: rgba(255,255,255,0.9);
+        font-size: 14px;
+        cursor: pointer;
+      }
+      
+      .heatmap-container {
+        overflow-x: auto;
+        padding: 10px 0;
+      }
+      
+      .heatmap {
+        display: inline-block;
+        min-width: 800px;
+      }
+      
+      .months {
+        display: flex;
+        margin-bottom: 8px;
+        padding-left: 30px;
+      }
+      
+      .month {
+        flex: 1;
+        font-size: 12px;
+        color: #666;
+        text-align: center;
+        min-width: 60px;
+      }
+      
+      .heatmap-grid {
+        display: flex;
+        gap: 2px;
+      }
+      
+      .weekdays {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        margin-right: 8px;
+      }
+      
+      .weekday {
+        height: 12px;
+        font-size: 10px;
+        color: #666;
+        display: flex;
+        align-items: center;
+        width: 20px;
+      }
+      
+      .weeks {
+        display: flex;
+        gap: 2px;
+      }
+      
+      .week {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+      }
+      
+      .day {
+        width: 12px;
+        height: 12px;
+        border-radius: 2px;
+        cursor: pointer;
+        transition: all 0.2s ease;
+        position: relative;
+      }
+      
+      .day:hover {
+        transform: scale(1.2);
+        border: 1px solid #333;
+      }
+      
+      /* 热力图颜色等级 */
+      .day.level-0 { background-color: #ebedf0; }
+      .day.level-1 { background-color: #c6e48b; }
+      .day.level-2 { background-color: #7bc96f; }
+      .day.level-3 { background-color: #239a3b; }
+      .day.level-4 { background-color: #196127; }
+      
+      .legend {
+        display: flex;
+        align-items: center;
+        justify-content: flex-end;
+        gap: 8px;
+        margin-top: 16px;
+        font-size: 12px;
+        color: #666;
+      }
+      
+      .legend-item {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+      }
+      
+      .legend-color {
+        width: 12px;
+        height: 12px;
+        border-radius: 2px;
+      }
+      
+      .tooltip {
+        position: absolute;
+        background: rgba(0, 0, 0, 0.8);
+        color: white;
+        padding: 8px 12px;
+        border-radius: 8px;
+        font-size: 12px;
+        pointer-events: none;
+        z-index: 1000;
+        white-space: nowrap;
+        opacity: 0;
+        transition: opacity 0.2s ease;
+      }
+      
+      .tooltip.show {
+        opacity: 1;
+      }
+      
+      .word-list {
+        margin-top: 20px;
+        padding: 16px;
+        background: rgba(255, 255, 255, 0.5);
+        border-radius: 12px;
+        display: none;
+      }
+      
+      .word-list h4 {
+        margin-bottom: 12px;
+        color: #333;
+        font-size: 14px;
+        font-weight: 600;
+      }
+      
+      .words {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+      
+      .word-tag {
+        background: linear-gradient(135deg, #667eea, #764ba2);
+        color: white;
+        padding: 4px 8px;
+        border-radius: 8px;
+        font-size: 12px;
+        font-weight: 500;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <header>
+        <h1>📊 学习热力图</h1>
+        <button class="back-btn" onclick="alert('这是预览版本')">返回</button>
+      </header>
+      <div class="content">
+        <div class="stats-overview">
+          <div class="stat-card">
+            <div class="stat-number">156</div>
+            <div class="stat-label">总单词数</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-number">23</div>
+            <div class="stat-label">本周新增</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-number">87</div>
+            <div class="stat-label">本月新增</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-number">12</div>
+            <div class="stat-label">最长连续天数</div>
+          </div>
+        </div>
+        
+        <div class="heatmap-section">
+          <div class="heatmap-header">
+            <h3 class="heatmap-title">🔥 学习活跃度</h3>
+            <select class="year-selector">
+              <option value="2024">2024年</option>
+            </select>
+          </div>
+          
+          <div class="heatmap-container">
+            <div class="heatmap">
+              <div class="months">
+                <div class="month">1月</div>
+                <div class="month">2月</div>
+                <div class="month">3月</div>
+                <div class="month">4月</div>
+                <div class="month">5月</div>
+                <div class="month">6月</div>
+                <div class="month">7月</div>
+                <div class="month">8月</div>
+                <div class="month">9月</div>
+                <div class="month">10月</div>
+                <div class="month">11月</div>
+                <div class="month">12月</div>
+              </div>
+              <div class="heatmap-grid">
+                <div class="weekdays">
+                  <div class="weekday"></div>
+                  <div class="weekday">一</div>
+                  <div class="weekday"></div>
+                  <div class="weekday">三</div>
+                  <div class="weekday"></div>
+                  <div class="weekday">五</div>
+                  <div class="weekday"></div>
+                </div>
+                <div class="weeks" id="weeksContainer">
+                  <!-- 热力图网格将由JavaScript生成 -->
+                </div>
+              </div>
+            </div>
+            
+            <div class="legend">
+              <span>少</span>
+              <div class="legend-item">
+                <div class="legend-color level-0"></div>
+              </div>
+              <div class="legend-item">
+                <div class="legend-color level-1"></div>
+              </div>
+              <div class="legend-item">
+                <div class="legend-color level-2"></div>
+              </div>
+              <div class="legend-item">
+                <div class="legend-color level-3"></div>
+              </div>
+              <div class="legend-item">
+                <div class="legend-color level-4"></div>
+              </div>
+              <span>多</span>
+            </div>
+          </div>
+          
+          <div class="word-list" id="wordList">
+            <h4 id="wordListTitle">今日学习的单词</h4>
+            <div class="words" id="wordsContainer">
+              <span class="word-tag">apple</span>
+              <span class="word-tag">banana</span>
+              <span class="word-tag">computer</span>
+              <span class="word-tag">development</span>
+              <span class="word-tag">extension</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    
+    <div class="tooltip" id="tooltip"></div>
+    
+    <script>
+      // 预览版本的热力图生成
+      function generatePreviewHeatmap() {
+        const weeksContainer = document.getElementById('weeksContainer');
+        const currentYear = 2024;
+        
+        // 获取年份的第一天和最后一天
+        const startDate = new Date(currentYear, 0, 1);
+        const endDate = new Date(currentYear, 11, 31);
+        
+        // 调整到周一开始
+        const firstDay = new Date(startDate);
+        const dayOfWeek = firstDay.getDay();
+        const daysToSubtract = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+        firstDay.setDate(firstDay.getDate() - daysToSubtract);
+        
+        // 计算需要多少周
+        const totalDays = Math.ceil((endDate - firstDay) / (1000 * 60 * 60 * 24)) + 1;
+        const totalWeeks = Math.ceil(totalDays / 7);
+        
+        // 生成模拟数据
+        const mockData = {};
+        for (let i = 0; i < 365; i++) {
+          const date = new Date(currentYear, 0, 1);
+          date.setDate(date.getDate() + i);
+          const dateStr = date.toISOString().split('T')[0];
+          // 随机生成单词数量，有些日子没有学习
+          const count = Math.random() > 0.3 ? Math.floor(Math.random() * 15) : 0;
+          if (count > 0) {
+            mockData[dateStr] = count;
+          }
+        }
+        
+        // 生成每周的格子
+        for (let week = 0; week < totalWeeks; week++) {
+          const weekElement = document.createElement('div');
+          weekElement.className = 'week';
+          
+          for (let day = 0; day < 7; day++) {
+            const currentDate = new Date(firstDay);
+            currentDate.setDate(firstDay.getDate() + week * 7 + day);
+            
+            const dayElement = document.createElement('div');
+            dayElement.className = 'day';
+            
+            // 只显示当前年份的日期
+            if (currentDate.getFullYear() === currentYear) {
+              const dateStr = currentDate.toISOString().split('T')[0];
+              const wordCount = mockData[dateStr] || 0;
+              
+              // 设置颜色等级
+              let level = 0;
+              if (wordCount > 0) {
+                if (wordCount <= 2) level = 1;
+                else if (wordCount <= 5) level = 2;
+                else if (wordCount <= 10) level = 3;
+                else level = 4;
+              }
+              
+              dayElement.classList.add(`level-${level}`);
+              
+              // 添加鼠标事件
+              dayElement.addEventListener('mouseenter', (e) => {
+                showTooltip(e, currentDate, wordCount);
+              });
+              
+              dayElement.addEventListener('mouseleave', () => {
+                hideTooltip();
+              });
+              
+              dayElement.addEventListener('click', () => {
+                showWordList(currentDate, wordCount);
+              });
+            } else {
+              dayElement.style.visibility = 'hidden';
+            }
+            
+            weekElement.appendChild(dayElement);
+          }
+          
+          weeksContainer.appendChild(weekElement);
+        }
+      }
+      
+      function showTooltip(event, date, count) {
+        const tooltip = document.getElementById('tooltip');
+        const dateStr = formatDateForDisplay(date);
+        
+        let content = `${dateStr}<br>`;
+        if (count === 0) {
+          content += '没有学习新单词';
+        } else {
+          content += `学习了 ${count} 个新单词`;
+        }
+        
+        tooltip.innerHTML = content;
+        tooltip.classList.add('show');
+        
+        // 定位tooltip
+        const rect = event.target.getBoundingClientRect();
+        tooltip.style.left = `${rect.left + rect.width / 2}px`;
+        tooltip.style.top = `${rect.top - 10}px`;
+        tooltip.style.transform = 'translate(-50%, -100%)';
+      }
+      
+      function hideTooltip() {
+        document.getElementById('tooltip').classList.remove('show');
+      }
+      
+      function showWordList(date, count) {
+        const wordList = document.getElementById('wordList');
+        const wordListTitle = document.getElementById('wordListTitle');
+        const wordsContainer = document.getElementById('wordsContainer');
+        
+        if (count > 0) {
+          wordListTitle.textContent = `${formatDateForDisplay(date)} 学习的单词`;
+          
+          // 生成模拟单词
+          const mockWords = ['apple', 'banana', 'computer', 'development', 'extension', 'function', 'github', 'heatmap', 'javascript', 'knowledge'];
+          const selectedWords = mockWords.slice(0, Math.min(count, mockWords.length));
+          
+          wordsContainer.innerHTML = '';
+          selectedWords.forEach(word => {
+            const wordTag = document.createElement('span');
+            wordTag.className = 'word-tag';
+            wordTag.textContent = word;
+            wordsContainer.appendChild(wordTag);
+          });
+          
+          wordList.style.display = 'block';
+        } else {
+          wordList.style.display = 'none';
+        }
+      }
+      
+      function formatDateForDisplay(date) {
+        const year = date.getFullYear();
+        const month = date.getMonth() + 1;
+        const day = date.getDate();
+        return `${year}年${month}月${day}日`;
+      }
+      
+      // 页面加载完成后生成热力图
+      document.addEventListener('DOMContentLoaded', () => {
+        generatePreviewHeatmap();
+        // 默认显示今日单词列表
+        document.getElementById('wordList').style.display = 'block';
+      });
+    </script>
+  </body>
+</html>

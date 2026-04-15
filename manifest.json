@@ -1,0 +1,40 @@
+{
+  "manifest_version": 3,
+  "name": "单词助手",
+  "description": "划词翻译、收藏到单词本、网页高亮，基于记忆曲线的单词复习",
+  "version": "1.0.0",
+  "icons": {},
+  "permissions": [
+    "storage",
+    "activeTab",
+    "scripting",
+    "alarms",
+    "unlimitedStorage"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "单词助手",
+    "default_popup": "popup.html"
+  },
+  "options_page": "options.html",
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content-script.js"],
+      "css": ["card.css"],
+      "run_at": "document_end"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["review.html", "heatmap.html"],
+      "matches": ["<all_urls>"]
+    }
+  ]
+}
+

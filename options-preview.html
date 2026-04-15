@@ -1,0 +1,235 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>单词助手 - 设置预览</title>
+    <style>
+      /* iOS 18 风格：柔和色彩、毛玻璃、圆角卡片、渐变标题 */
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      
+      body { 
+        max-width: 680px; 
+        margin: 0 auto; 
+        font-family: ui-rounded, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+        background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+        min-height: 100vh;
+        padding: 20px;
+      }
+      
+      .container {
+        background: rgba(255, 255, 255, 0.95);
+        backdrop-filter: blur(20px);
+        border-radius: 20px;
+        box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+        overflow: hidden;
+      }
+      
+      header { 
+        padding: 20px 24px; 
+        background: linear-gradient(135deg, #a18cd1, #fbc2eb); 
+        color: #fff;
+        border-bottom: 0;
+      }
+      
+      header h1 { 
+        font-size: 24px; 
+        font-weight: 700; 
+        letter-spacing: 0.3px; 
+        margin: 0;
+      }
+      
+      .content {
+        padding: 24px;
+      }
+      
+      .setting-group {
+        background: rgba(255, 255, 255, 0.7);
+        backdrop-filter: blur(12px);
+        border-radius: 16px;
+        padding: 20px;
+        margin-bottom: 16px;
+        border: 1px solid rgba(255, 255, 255, 0.3);
+      }
+      
+      .setting-group h3 {
+        font-size: 16px;
+        font-weight: 600;
+        color: #333;
+        margin-bottom: 16px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      
+      .setting-item {
+        margin-bottom: 16px;
+      }
+      
+      .setting-item:last-child {
+        margin-bottom: 0;
+      }
+      
+      label { 
+        display: flex; 
+        align-items: center; 
+        gap: 12px; 
+        font-size: 14px;
+        color: #555;
+        cursor: pointer;
+      }
+      
+      input[type="checkbox"] { 
+        width: 20px; 
+        height: 20px; 
+        accent-color: #667eea;
+        cursor: pointer;
+      }
+      
+      input[type="number"] {
+        padding: 10px 12px;
+        border: 1px solid rgba(0,0,0,0.08);
+        border-radius: 12px;
+        background: rgba(255,255,255,0.9);
+        font-size: 14px;
+        width: 80px;
+        text-align: center;
+      }
+      
+      input[type="number"]:focus {
+        outline: none;
+        border-color: #667eea;
+        box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+      }
+      
+      select { 
+        padding: 10px 12px; 
+        border: 1px solid rgba(0,0,0,0.08); 
+        border-radius: 12px; 
+        background: rgba(255,255,255,0.9);
+        font-size: 14px;
+        cursor: pointer;
+      }
+      
+      select:focus {
+        outline: none;
+        border-color: #667eea;
+        box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+      }
+      
+      .save-section {
+        text-align: center;
+        padding-top: 8px;
+      }
+      
+      button { 
+        padding: 12px 32px; 
+        border: none; 
+        background: linear-gradient(135deg, #667eea, #764ba2); 
+        color: #fff; 
+        border-radius: 16px; 
+        cursor: pointer; 
+        font-size: 14px;
+        font-weight: 600;
+        transition: all 0.3s ease;
+      }
+      
+      button:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 8px 25px rgba(102, 126, 234, 0.3);
+      }
+      
+      .description {
+        font-size: 12px;
+        color: #888;
+        margin-top: 4px;
+        line-height: 1.4;
+      }
+      
+      .input-group {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      
+      .success-message {
+        background: linear-gradient(135deg, #56ab2f, #a8e6cf);
+        color: white;
+        padding: 12px 16px;
+        border-radius: 12px;
+        margin-top: 16px;
+        text-align: center;
+        font-size: 14px;
+        font-weight: 500;
+        display: none;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <header>
+        <h1>⚙️ 设置</h1>
+      </header>
+      <div class="content">
+        <div class="setting-group">
+          <h3>🎨 界面设置</h3>
+          <div class="setting-item">
+            <label>
+              <input type="checkbox" id="highlight" checked />
+              开启网页高亮
+            </label>
+            <div class="description">在网页上高亮显示已收藏的单词</div>
+          </div>
+        </div>
+        
+        <div class="setting-group">
+          <h3>🌐 翻译设置</h3>
+          <div class="setting-item">
+            <label>
+              翻译语言：
+              <select id="language">
+                <option value="en" selected>英语</option>
+              </select>
+            </label>
+            <div class="description">选择主要翻译的语言</div>
+          </div>
+        </div>
+        
+        <div class="setting-group">
+          <h3>📚 复习设置</h3>
+          <div class="setting-item">
+            <label>
+              每日复习单词数：
+              <div class="input-group">
+                <input type="number" id="dailyReviewCount" min="1" max="50" value="10" />
+                <span>个</span>
+              </div>
+            </label>
+            <div class="description">设置每次复习时加载的单词数量（1-50个）</div>
+          </div>
+        </div>
+        
+        <div class="save-section">
+          <button id="saveBtn">保存设置</button>
+          <div class="success-message" id="successMessage">
+            ✅ 设置已保存成功！
+          </div>
+        </div>
+      </div>
+    </div>
+    
+    <script>
+      document.getElementById('saveBtn').addEventListener('click', function() {
+        const successMessage = document.getElementById('successMessage');
+        successMessage.style.display = 'block';
+        setTimeout(() => {
+          successMessage.style.display = 'none';
+        }, 2000);
+      });
+    </script>
+  </body>
+</html>
