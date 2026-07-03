@@ -7,6 +7,11 @@ const STORAGE_KEYS = {
   DAILY_STATS: 'daily_stats'        // Map<string, { date: string, words: string[], count: number }>
 };
 
+const CONTEXT_MENU_IDS = {
+  TERM: 'word-helper-translate-term',
+  SENTENCE: 'word-helper-translate-sentence'
+};
+
 // 记忆曲线复习间隔（毫秒）
 const REVIEW_INTERVALS = [
   0,                    // 0: 立即（初次记录）
@@ -40,7 +45,7 @@ chrome.runtime.onInstalled.addListener(async () => {
   const { [WORD_BOOK]: wb } = await chrome.storage.local.get(WORD_BOOK);
   if (!wb) init[WORD_BOOK] = {};
   const { [SETTINGS]: s } = await chrome.storage.local.get(SETTINGS);
-  if (!s) init[SETTINGS] = { highlight: true, language: 'en' };
+  if (!s) init[SETTINGS] = getDefaultSettings();
   const { [QUERY_STATS]: qs } = await chrome.storage.local.get(QUERY_STATS);
   if (!qs) init[QUERY_STATS] = {};
   const { [DAILY_STATS]: ds } = await chrome.storage.local.get(DAILY_STATS);
@@ -49,7 +54,41 @@ chrome.runtime.onInstalled.addListener(async () => {
     await chrome.storage.local.set(init);
   }
   // 配置每日复习提醒
+  createTranslationContextMenus();
   chrome.alarms.create('dailyReview', { delayInMinutes: 1, periodInMinutes: 60 * 24 });
+});
+
+chrome.runtime.onStartup?.addListener(() => {
+  createTranslationContextMenus();
+});
+
+function createTranslationContextMenus() {
+  if (!chrome.contextMenus?.create) return;
+  chrome.contextMenus.removeAll?.(() => {
+    chrome.contextMenus.create({
+      id: CONTEXT_MENU_IDS.TERM,
+      title: '按单词/短语解析',
+      contexts: ['selection']
+    });
+    chrome.contextMenus.create({
+      id: CONTEXT_MENU_IDS.SENTENCE,
+      title: '按整句/整段翻译',
+      contexts: ['selection']
+    });
+  });
+}
+
+chrome.contextMenus?.onClicked?.addListener((info, tab) => {
+  if (!tab?.id) return;
+  if (![CONTEXT_MENU_IDS.TERM, CONTEXT_MENU_IDS.SENTENCE].includes(info.menuItemId)) return;
+  const mode = info.menuItemId === CONTEXT_MENU_IDS.TERM ? 'term' : 'sentence';
+  chrome.tabs?.sendMessage?.(tab.id, {
+    type: 'WH_CONTEXT_TRANSLATE',
+    payload: {
+      mode,
+      selectedText: info.selectionText || ''
+    }
+  });
 });
 
 chrome.alarms.onAlarm.addListener((alarm) => {
@@ -72,6 +111,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         return;
       }
       case 'GET_QUERY_STATS': {
+        const data = await getQueryStats(message.payload.word);
+        sendResponse({ ok: true, data });
+        return;
+      }
+      case 'RECORD_QUERY_STAT': {
+        await recordQueryStat(message.payload.word);
         const data = await getQueryStats(message.payload.word);
         sendResponse({ ok: true, data });
         return;
@@ -136,7 +181,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         return;
       }
       case 'TRANSLATE_PARAGRAPH': {
-        const translation = await translateWithDeepL(message.payload.text);
+        const data = await translateSelectionWithDeepSeek({
+          mode: 'sentence',
+          selectedText: message.payload.text,
+          context: message.payload.context || {}
+        });
+        const translation = data?.result?.translation || data?.rawText || '';
         if (translation) {
           sendResponse({ ok: true, data: { translation } });
         } else {
@@ -144,10 +194,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         }
         return;
       }
+      case 'TRANSLATE_SELECTION_DEEPSEEK': {
+        const data = await translateSelectionWithDeepSeek(message.payload);
+        sendResponse({ ok: true, data });
+        return;
+      }
       default:
         sendResponse({ ok: false, error: 'UNKNOWN_MESSAGE' });
     }
-  })();
+  })().catch((error) => {
+    sendResponse({ ok: false, error: error?.message || 'UNKNOWN_ERROR' });
+  });
   // 使用异步
   return true;
 });
@@ -389,6 +446,182 @@ async function translateWithDeepL(text) {
 }
 // ===================== DeepL 集成结束 =====================
 
+// ===================== DeepSeek selection translation =====================
+const DEEPSEEK_CHAT_ENDPOINT = 'https://api.deepseek.com/chat/completions';
+
+async function translateSelectionWithDeepSeek(payload = {}) {
+  const settings = await getSettings();
+  const deepseek = settings.deepseek || {};
+  const apiKey = String(deepseek.apiKey || '').trim();
+  if (!apiKey) {
+    throw new Error('DEEPSEEK_API_KEY_MISSING');
+  }
+
+  const mode = payload.mode === 'term' ? 'term' : 'sentence';
+  const selectedText = String(payload.selectedText || '').trim();
+  if (!selectedText) {
+    throw new Error('SELECTED_TEXT_EMPTY');
+  }
+
+  const context = payload.context || {};
+  const targetLanguage = payload.targetLanguage || deepseek.targetLanguage || 'zh-CN';
+  const requestJson = buildDeepSeekSelectionRequest({
+    mode,
+    selectedText,
+    context,
+    targetLanguage
+  });
+
+  const resp = await fetch(DEEPSEEK_CHAT_ENDPOINT, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${apiKey}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      model: deepseek.model || 'deepseek-chat',
+      temperature: 0.2,
+      messages: [
+        {
+          role: 'system',
+          content: buildDeepSeekSystemPrompt(mode)
+        },
+        {
+          role: 'user',
+          content: JSON.stringify(requestJson, null, 2)
+        }
+      ]
+    })
+  });
+
+  const json = await resp.json().catch(() => null);
+  if (!resp.ok) {
+    const detail = json?.error?.message || `HTTP_${resp.status}`;
+    throw new Error(`DEEPSEEK_REQUEST_FAILED:${detail}`);
+  }
+
+  const content = json?.choices?.[0]?.message?.content;
+  if (!content) {
+    throw new Error('DEEPSEEK_EMPTY_RESPONSE');
+  }
+
+  return normalizeDeepSeekResult(mode, content, requestJson, json);
+}
+
+function buildDeepSeekSelectionRequest({ mode, selectedText, context, targetLanguage }) {
+  if (mode === 'term') {
+    return {
+      type: 'word_or_phrase_explanation',
+      selectedText,
+      sourceLanguage: 'auto',
+      targetLanguage,
+      context: {
+        before: String(context.before || ''),
+        sentence: String(context.sentence || selectedText),
+        after: String(context.after || '')
+      },
+      outputSchema: {
+        type: 'word_or_phrase_explanation',
+        selectedText: 'string',
+        meaningInContext: 'string',
+        partOfSpeech: 'string',
+        sentenceTranslation: 'string',
+        explanation: 'string',
+        alternatives: ['string']
+      }
+    };
+  }
+
+  return {
+    type: 'sentence_translation',
+    sourceText: selectedText,
+    sourceLanguage: 'auto',
+    targetLanguage,
+    context: {
+      before: String(context.before || ''),
+      after: String(context.after || '')
+    },
+    outputSchema: {
+      type: 'sentence_translation',
+      translation: 'string',
+      detectedLanguage: 'string',
+      notes: ['string']
+    }
+  };
+}
+
+function buildDeepSeekSystemPrompt(mode) {
+  if (mode === 'term') {
+    return [
+      'You are a context-aware bilingual reading assistant.',
+      'Explain the selected word or phrase according to its meaning in the provided sentence.',
+      'Return JSON only. Do not wrap the response in Markdown.',
+      'Keep explanations concise and useful for Chinese readers.'
+    ].join('\n');
+  }
+
+  return [
+    'You are a professional translation engine.',
+    'Translate the selected sentence or passage naturally and faithfully.',
+    'Return JSON only. Do not wrap the response in Markdown.',
+    'Keep names, technical terms, numbers, and formatting intent accurate.'
+  ].join('\n');
+}
+
+function normalizeDeepSeekResult(mode, content, requestJson, rawResponse) {
+  const parsed = parseJsonLikeResponse(content);
+  if (parsed) {
+    return {
+      mode,
+      request: requestJson,
+      result: parsed,
+      rawText: content
+    };
+  }
+
+  const result = mode === 'term'
+    ? {
+        type: 'word_or_phrase_explanation',
+        selectedText: requestJson.selectedText,
+        meaningInContext: content,
+        partOfSpeech: '',
+        sentenceTranslation: '',
+        explanation: content,
+        alternatives: []
+      }
+    : {
+        type: 'sentence_translation',
+        translation: content,
+        detectedLanguage: 'auto',
+        notes: []
+      };
+
+  return {
+    mode,
+    request: requestJson,
+    result,
+    rawText: content,
+    rawResponse
+  };
+}
+
+function parseJsonLikeResponse(content) {
+  const text = String(content || '').trim();
+  if (!text) return null;
+  try {
+    return JSON.parse(text);
+  } catch (_) {
+    const match = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
+    if (!match) return null;
+    try {
+      return JSON.parse(match[1].trim());
+    } catch (__) {
+      return null;
+    }
+  }
+}
+// ===================== DeepSeek selection translation end =====================
+
 async function getWordBook() {
   const { [STORAGE_KEYS.WORD_BOOK]: book } = await chrome.storage.local.get(STORAGE_KEYS.WORD_BOOK);
   return book || {};
@@ -505,13 +738,34 @@ async function getWordsForReview(limit = 5) {
 
 async function getSettings() {
   const { [STORAGE_KEYS.SETTINGS]: settings } = await chrome.storage.local.get(STORAGE_KEYS.SETTINGS);
-  return settings || { highlight: true, language: 'en' };
+  const defaults = getDefaultSettings();
+  return {
+    ...defaults,
+    ...(settings || {}),
+    deepseek: {
+      ...defaults.deepseek,
+      ...((settings || {}).deepseek || {})
+    }
+  };
 }
 
 async function updateSettings(patch) {
   const current = await getSettings();
   const next = { ...current, ...patch };
   await chrome.storage.local.set({ [STORAGE_KEYS.SETTINGS]: next });
+}
+
+function getDefaultSettings() {
+  return {
+    highlight: true,
+    language: 'en',
+    dailyReviewCount: 5,
+    deepseek: {
+      apiKey: '',
+      model: 'deepseek-chat',
+      targetLanguage: 'zh-CN'
+    }
+  };
 }
 
 // 查询统计相关函数

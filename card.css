@@ -24,6 +24,50 @@
 .word-helper-card .wh-zh-translation { font-size: 15px; font-weight: 600; color: #fff; margin-bottom: 8px; padding: 5px 9px; background: rgba(255,255,255,0.18); border-radius: 8px; }
 .word-helper-card .wh-explains { margin: 0; padding-left: 18px; }
 .word-helper-card .wh-explains li { margin: 4px 0; font-size: 12px; color: rgba(255,255,255,0.85); }
+.word-helper-card--deepseek {
+  max-width: min(420px, calc(100vw - 32px));
+  max-height: min(70vh, 520px);
+  overflow: auto;
+}
+.word-helper-card .wh-selected-text {
+  font-size: 12px;
+  line-height: 1.5;
+  color: rgba(255,255,255,0.78);
+  margin-bottom: 10px;
+  max-height: 80px;
+  overflow: auto;
+}
+.word-helper-card .wh-loading {
+  font-size: 13px;
+  color: rgba(255,255,255,0.86);
+  animation: wh-pulse 1.2s ease-in-out infinite;
+}
+.word-helper-card .wh-result-main {
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1.65;
+  color: #fff;
+  margin-bottom: 10px;
+  padding: 8px 10px;
+  background: rgba(255,255,255,0.18);
+  border-radius: 8px;
+}
+.word-helper-card .wh-result-row {
+  margin-top: 9px;
+}
+.word-helper-card .wh-result-row span {
+  display: block;
+  font-size: 11px;
+  font-weight: 700;
+  color: rgba(255,255,255,0.72);
+  margin-bottom: 3px;
+}
+.word-helper-card .wh-result-row p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.55;
+  color: rgba(255,255,255,0.9);
+}
 .word-helper-card .wh-actions { margin-top: 12px; display: flex; justify-content: flex-end; gap: 8px; }
 .word-helper-card button {
   background: rgba(255,255,255,0.16);
@@ -47,6 +91,32 @@
 
 mark.word-helper-highlight { background: rgba(255, 234, 167, 0.9); padding: 0 3px; border-radius: 4px; }
 
+.word-helper-trigger {
+  position: fixed;
+  z-index: 2147483647;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid rgba(255,255,255,0.7);
+  border-radius: 8px;
+  background: linear-gradient(135deg, #f43f8f 0%, #ec4899 100%);
+  color: #fff;
+  font: 700 14px/1 system-ui, -apple-system, Segoe UI, sans-serif;
+  box-shadow: 0 10px 24px rgba(236,72,153,0.28), 0 2px 8px rgba(0,0,0,0.16);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  animation: wh-pop 160ms cubic-bezier(.2,.7,.3,1) both;
+}
+.word-helper-trigger:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 14px 28px rgba(236,72,153,0.34), 0 3px 10px rgba(0,0,0,0.18);
+}
+.word-helper-trigger:active {
+  transform: scale(0.96);
+}
+
 /* 朗读按钮 */
 .wh-speak-btn {
   background: rgba(255,255,255,0.16) !important;
@@ -68,19 +138,20 @@ mark.word-helper-highlight { background: rgba(255, 234, 167, 0.9); padding: 0 3p
 /* 沉浸式翻译块 */
 .wh-immersive-block {
   display: block;
-  font-size: 0.88em;
-  color: #1d4ed8;
-  background: rgba(37, 99, 235, 0.06);
-  border-left: 3px solid rgba(37, 99, 235, 0.35);
-  padding: 3px 10px;
-  margin: 3px 0 10px 0;
-  border-radius: 0 6px 6px 0;
-  line-height: 1.65;
+  font-size: 0.95em;
+  color: #444;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  margin: 8px 0 28px 0;
+  line-height: 1.85;
+  white-space: pre-wrap;
   animation: wh-fade-in 280ms ease both;
 }
 .wh-immersive-block--loading {
   color: #94a3b8;
   font-style: italic;
+  margin: 6px 0 18px 0;
   animation: wh-pulse 1.2s ease-in-out infinite;
 }
 @keyframes wh-fade-in {

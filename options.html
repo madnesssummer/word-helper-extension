@@ -90,17 +90,30 @@
         cursor: pointer;
       }
       
-      input[type="number"] {
+      input[type="number"],
+      input[type="password"],
+      input[type="text"] {
         padding: 10px 12px;
         border: 1px solid rgba(0,0,0,0.08);
         border-radius: 12px;
         background: rgba(255,255,255,0.9);
         font-size: 14px;
+      }
+
+      input[type="number"] {
         width: 80px;
         text-align: center;
       }
       
-      input[type="number"]:focus {
+      input[type="password"],
+      input[type="text"] {
+        width: 100%;
+        min-width: 260px;
+      }
+
+      input[type="number"]:focus,
+      input[type="password"]:focus,
+      input[type="text"]:focus {
         outline: none;
         border-color: #667eea;
         box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
@@ -155,6 +168,14 @@
         align-items: center;
         gap: 8px;
       }
+
+      .field-label {
+        display: block;
+        margin-bottom: 8px;
+        font-size: 14px;
+        color: #555;
+        cursor: default;
+      }
       
       .success-message {
         background: linear-gradient(135deg, #56ab2f, #a8e6cf);
@@ -166,6 +187,10 @@
         font-size: 14px;
         font-weight: 500;
         display: none;
+      }
+
+      .success-message.error {
+        background: linear-gradient(135deg, #ef4444, #f97316);
       }
     </style>
   </head>
@@ -197,6 +222,27 @@
             </label>
             <div class="description">选择主要翻译的语言</div>
           </div>
+          <div class="setting-item">
+            <span class="field-label">DeepSeek API Key：</span>
+            <input type="password" id="deepseekApiKey" placeholder="sk-..." autocomplete="off" />
+            <div class="description">仅保存在本机浏览器的 chrome.storage.local 中，用于 background/service worker 调用 DeepSeek</div>
+          </div>
+          <div class="setting-item">
+            <span class="field-label">DeepSeek 模型：</span>
+            <input type="text" id="deepseekModel" value="deepseek-chat" />
+            <div class="description">默认使用 deepseek-chat；后续如需切换模型可在这里修改</div>
+          </div>
+          <div class="setting-item">
+            <label>
+              目标语言：
+              <select id="deepseekTargetLanguage">
+                <option value="zh-CN">简体中文</option>
+                <option value="zh-TW">繁体中文</option>
+                <option value="en">英语</option>
+              </select>
+            </label>
+            <div class="description">划句翻译和划词释义的输出语言</div>
+          </div>
         </div>
         
         <div class="setting-group">
@@ -214,56 +260,14 @@
         </div>
         
         <div class="save-section">
-          <button id="saveBtn">保存设置</button>
+          <button id="saveBtn" type="button">保存设置</button>
           <div class="success-message" id="successMessage">
             ✅ 设置已保存成功！
           </div>
         </div>
       </div>
     </div>
-    
-    <script>
-      async function loadSettings() {
-        const { settings } = await chrome.storage.local.get('settings');
-        const s = settings || { 
-          highlight: true, 
-          language: 'en',
-          dailyReviewCount: 5
-        };
-        
-        document.getElementById('highlight').checked = !!s.highlight;
-        document.getElementById('language').value = s.language || 'en';
-        document.getElementById('dailyReviewCount').value = s.dailyReviewCount || 5;
-      }
-      
-      async function saveSettings() {
-        const highlight = document.getElementById('highlight').checked;
-        const language = document.getElementById('language').value;
-        const dailyReviewCount = parseInt(document.getElementById('dailyReviewCount').value) || 5;
-        
-        // 验证复习单词数范围
-        const validCount = Math.max(1, Math.min(50, dailyReviewCount));
-        document.getElementById('dailyReviewCount').value = validCount;
-        
-        await chrome.storage.local.set({ 
-          settings: { 
-            highlight, 
-            language, 
-            dailyReviewCount: validCount 
-          } 
-        });
-        
-        // 显示成功消息
-        const successMessage = document.getElementById('successMessage');
-        successMessage.style.display = 'block';
-        setTimeout(() => {
-          successMessage.style.display = 'none';
-        }, 2000);
-      }
-      
-      document.getElementById('saveBtn').addEventListener('click', saveSettings);
-      loadSettings();
-    </script>
+    <script src="options.js"></script>
   </body>
   </html>
 

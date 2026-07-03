@@ -15,10 +15,10 @@ let immersiveEnabled = false;
 
 function updateImmersiveBtn() {
   if (immersiveEnabled) {
-    immersiveBtn.textContent = '关闭沉浸翻译';
+    immersiveBtn.textContent = '关闭全文翻译';
     immersiveBtn.classList.add('immersive-button--active');
   } else {
-    immersiveBtn.textContent = '开启沉浸翻译';
+    immersiveBtn.textContent = '开启全文翻译';
     immersiveBtn.classList.remove('immersive-button--active');
   }
 }
