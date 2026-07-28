@@ -78,18 +78,19 @@ class ReviewSystem {
 
     async loadStats() {
         return new Promise((resolve, reject) => {
-            chrome.storage.local.get(['word_book'], (result) => {
+            chrome.storage.local.get(['word_book', 'review_progress'], (result) => {
                 if (chrome.runtime.lastError) {
                     reject(new Error(chrome.runtime.lastError.message));
                     return;
                 }
                 
                 const wordBook = result.word_book || {};
-                const words = Object.values(wordBook);
+                const progress = result.review_progress || {};
+                const words = Object.keys(wordBook);
                 
                 this.totalWords = words.length;
-                this.masteredWords = words.filter(word => 
-                    word.reviewStage >= 8 // 已掌握阶段
+                this.masteredWords = words.filter(word =>
+                    (progress[word]?.reviewStage || 0) >= 7 // 已掌握阶段
                 ).length;
                 
                 this.updateStatsDisplay();
@@ -122,11 +123,13 @@ class ReviewSystem {
         }
 
         const currentWord = this.wordsForReview[this.currentWordIndex];
+        // 必须先隐藏旧释义，再替换内容，避免切词时新释义闪现一帧。
+        this.currentDefinitionEl.classList.remove('show');
+        this.currentDefinitionEl.setAttribute('aria-hidden', 'true');
         this.currentWordEl.textContent = currentWord.word;
         this.currentDefinitionEl.textContent = currentWord.definition;
-        
+
         // 重置UI状态
-        this.currentDefinitionEl.classList.remove('show');
         this.showBtn.style.display = 'inline-block';
         this.correctBtn.style.display = 'none';
         this.wrongBtn.style.display = 'none';
@@ -141,6 +144,7 @@ class ReviewSystem {
 
     showDefinition() {
         this.currentDefinitionEl.classList.add('show');
+        this.currentDefinitionEl.setAttribute('aria-hidden', 'false');
         this.showBtn.style.display = 'none';
         this.correctBtn.style.display = 'inline-block';
         this.wrongBtn.style.display = 'inline-block';

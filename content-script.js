@@ -194,7 +194,7 @@ function showDeepSeekLoading(x, y, selectedText, mode) {
   removeCard();
   cardRoot = document.createElement('div');
   cardRoot.className = 'word-helper-card word-helper-card--deepseek';
-  cardRoot.style.setProperty('--wh-gradient', pickGradient());
+  applyRandomCardTheme(cardRoot);
   cardRoot.style.left = `${x + 10}px`;
   cardRoot.style.top = `${y + 10}px`;
   cardRoot.innerHTML = `
@@ -209,7 +209,7 @@ async function showDeepSeekResult(x, y, selectedText, mode, result) {
   removeCard();
   cardRoot = document.createElement('div');
   cardRoot.className = 'word-helper-card word-helper-card--deepseek';
-  cardRoot.style.setProperty('--wh-gradient', pickGradient());
+  applyRandomCardTheme(cardRoot);
   cardRoot.style.left = `${x + 10}px`;
   cardRoot.style.top = `${y + 10}px`;
 
@@ -242,91 +242,34 @@ async function showDeepSeekResult(x, y, selectedText, mode, result) {
 }
 
 function buildTermResultHtml(selectedText, result, queryStats, inWordBook) {
-  const alternatives = Array.isArray(result.alternatives) ? result.alternatives : [];
-  const alternativesHtml = alternatives.length
-    ? `<div class="wh-result-row"><span>可替换译法</span><p>${alternatives.map(escapeHtml).join(' / ')}</p></div>`
-    : '';
-  const sentenceHtml = result.sentenceTranslation
-    ? `<div class="wh-result-row"><span>原句翻译</span><p>${escapeHtml(result.sentenceTranslation)}</p></div>`
-    : '';
-  const actionButtons = inWordBook
-    ? `<button id="wh-deepseek-familiar" class="wh-familiar-btn">熟悉</button>`
-    : `<button id="wh-deepseek-fav">收藏</button>`;
   const queryCount = queryStats?.count || 0;
 
   return `
-    <div class="wh-title">${escapeHtml(selectedText)}<span class="wh-type-tag">词/短语</span></div>
+    <div class="wh-title">
+      ${escapeHtml(selectedText)}
+      <span class="wh-type-tag">词/短语</span>
+      ${buildHeartButton('wh-deepseek-heart', inWordBook)}
+    </div>
     <div class="wh-query-stats">查询次数: ${queryCount} 次</div>
     <div class="wh-result-main">${escapeHtml(result.meaningInContext || result.translation || '')}</div>
     <div class="wh-result-row"><span>句中含义</span><p>${escapeHtml(result.explanation || result.meaningInContext || '')}</p></div>
     ${result.partOfSpeech ? `<div class="wh-result-row"><span>词性</span><p>${escapeHtml(result.partOfSpeech)}</p></div>` : ''}
-    ${sentenceHtml}
-    ${alternativesHtml}
-    <div class="wh-actions">
-      ${actionButtons}
-    </div>
   `;
 }
 
 function bindDeepSeekTermActions(word, result, inWordBook) {
-  if (inWordBook) {
-    document.getElementById('wh-deepseek-familiar')?.addEventListener('click', async () => {
-      const button = document.getElementById('wh-deepseek-familiar');
-      button.textContent = '删除中...';
-      button.disabled = true;
-      const { ok, data } = await chrome.runtime.sendMessage({
-        type: 'REMOVE_FROM_WORD_BOOK',
-        payload: { word }
-      });
-      if (ok && data?.success) {
-        button.textContent = '已删除';
-        setTimeout(() => {
-          removeCard();
-          highlightWordsOnPage();
-        }, 800);
-      } else {
-        button.textContent = '删除失败';
-        button.disabled = false;
-      }
-    });
-    return;
-  }
-
-  document.getElementById('wh-deepseek-fav')?.addEventListener('click', async () => {
-    const button = document.getElementById('wh-deepseek-fav');
-    button.textContent = '收藏中...';
-    button.disabled = true;
-    const { ok } = await chrome.runtime.sendMessage({
-      type: 'ADD_TO_WORD_BOOK',
-      payload: {
-        word,
-        translation: buildDeepSeekWordBookTranslation(word, result)
-      }
-    });
-    if (ok) {
-      button.textContent = '已收藏';
-      setTimeout(() => {
-        removeCard();
-        highlightWordsOnPage();
-      }, 800);
-    } else {
-      button.textContent = '收藏失败';
-      button.disabled = false;
-    }
-  });
+  bindWordBookHeart(
+    'wh-deepseek-heart',
+    word,
+    buildDeepSeekWordBookEntry(result),
+    inWordBook
+  );
 }
 
-function buildDeepSeekWordBookTranslation(word, result) {
-  const explains = [
-    result.meaningInContext || result.translation || '',
-    result.explanation || '',
-    result.sentenceTranslation ? `原句翻译: ${result.sentenceTranslation}` : ''
-  ].filter(Boolean);
+function buildDeepSeekWordBookEntry(result) {
   return {
-    word,
-    phonetic: '',
-    explains,
-    deepseek: result
+    meaning: result.meaningInContext || result.translation || '暂无释义',
+    partOfSpeech: result.partOfSpeech || ''
   };
 }
 
@@ -379,19 +322,13 @@ function showCard(x, y, word, translation, queryStats, inWordBook) {
   cardRoot = document.createElement('div');
   cardRoot.className = 'word-helper-card';
   // 随机渐变主题（iOS 18 风格）
-  cardRoot.style.setProperty('--wh-gradient', pickGradient());
+  applyRandomCardTheme(cardRoot);
   cardRoot.style.left = `${x + 10}px`;
   cardRoot.style.top = `${y + 10}px`;
   
   // 格式化查询次数显示
   const queryCount = queryStats?.count || 0;
-  const lastQueried = queryStats?.lastQueried ? new Date(queryStats.lastQueried).toLocaleString() : '从未查询';
-  
-  // 根据单词是否在单词本中显示不同的按钮
-  const actionButtons = inWordBook 
-    ? `<button id="wh-familiar" class="wh-familiar-btn">熟悉</button>`
-    : `<button id="wh-fav">收藏</button>`;
-  
+
   const isPhrase = /\s/.test(word);
   const typeTag = isPhrase ? `<span class="wh-type-tag">短语</span>` : '';
   const phoneticHtml = !isPhrase && translation?.phonetic
@@ -408,15 +345,15 @@ function showCard(x, y, word, translation, queryStats, inWordBook) {
   cardRoot.innerHTML = `
     <div class="wh-title">
       ${escapeHtml(word)}${typeTag}
-      <button id="wh-speak" class="wh-speak-btn" title="朗读">🔊</button>
+      <span class="wh-title-actions">
+        <button id="wh-speak" class="wh-speak-btn" title="朗读" aria-label="朗读">🔊</button>
+        ${buildHeartButton('wh-heart', inWordBook)}
+      </span>
     </div>
     <div class="wh-query-stats">查询次数: ${queryCount} 次</div>
     ${phoneticHtml}
     ${chineseHtml}
     ${dictHtml}
-    <div class="wh-actions">
-      ${actionButtons}
-    </div>
   `;
   document.body.appendChild(cardRoot);
 
@@ -425,107 +362,71 @@ function showCard(x, y, word, translation, queryStats, inWordBook) {
     speak(word);
   });
 
-  if (inWordBook) {
-    // 熟悉按钮事件处理
-    document.getElementById('wh-familiar').addEventListener('click', async () => {
-      const button = document.getElementById('wh-familiar');
-      const originalText = button.textContent;
-      
-      // 显示加载状态
-      button.textContent = '删除中...';
-      button.disabled = true;
-      
-      try {
-        const { ok, data } = await chrome.runtime.sendMessage({ 
-          type: 'REMOVE_FROM_WORD_BOOK', 
-          payload: { word } 
-        });
-        
-        if (ok && data.success) {
-          button.textContent = '已删除';
-          button.style.background = 'rgba(231, 76, 60, 0.8)';
-          
-          // 2秒后关闭卡片
-          setTimeout(() => {
-            removeCard();
-            // 触发一次高亮刷新
-            highlightWordsOnPage();
-          }, 2000);
-        } else {
-          button.textContent = '删除失败';
-          button.style.background = 'rgba(231, 76, 60, 0.8)';
-          button.disabled = false;
-          
-          // 3秒后恢复原状
-          setTimeout(() => {
-            button.textContent = originalText;
-            button.style.background = '';
-          }, 3000);
-        }
-      } catch (error) {
-        console.error('删除单词失败:', error);
-        button.textContent = '删除失败';
-        button.style.background = 'rgba(231, 76, 60, 0.8)';
-        button.disabled = false;
-        
-        // 3秒后恢复原状
-        setTimeout(() => {
-          button.textContent = originalText;
-          button.style.background = '';
-        }, 3000);
-      }
-    });
-  } else {
-    // 收藏按钮事件处理
-    document.getElementById('wh-fav').addEventListener('click', async () => {
-      const button = document.getElementById('wh-fav');
-      const originalText = button.textContent;
-      
-      // 显示加载状态
-      button.textContent = '收藏中...';
-      button.disabled = true;
-      
-      try {
-        const { ok } = await chrome.runtime.sendMessage({ 
-          type: 'ADD_TO_WORD_BOOK', 
-          payload: { word, translation } 
-        });
-        
-        if (ok) {
-          button.textContent = '已收藏';
-          button.style.background = 'rgba(46, 204, 113, 0.8)';
-          
-          // 2秒后关闭卡片
-          setTimeout(() => {
-            removeCard();
-            // 触发一次高亮刷新
-            highlightWordsOnPage();
-          }, 2000);
-        } else {
-          button.textContent = '收藏失败';
-          button.style.background = 'rgba(231, 76, 60, 0.8)';
-          button.disabled = false;
-          
-          // 3秒后恢复原状
-          setTimeout(() => {
-            button.textContent = originalText;
-            button.style.background = '';
-          }, 3000);
-        }
-      } catch (error) {
-        console.error('收藏失败:', error);
-        button.textContent = '收藏失败';
-        button.style.background = 'rgba(231, 76, 60, 0.8)';
-        button.disabled = false;
-        
-        // 3秒后恢复原状
-        setTimeout(() => {
-          button.textContent = originalText;
-          button.style.background = '';
-        }, 3000);
-      }
-    });
-  }
+  bindWordBookHeart('wh-heart', word, {
+    meaning: translation?.meaning || translation?.explains?.[0] || '暂无释义',
+    partOfSpeech: translation?.partOfSpeech || ''
+  }, inWordBook);
+}
+
+function buildHeartButton(id, inWordBook) {
+  const activeClass = inWordBook ? ' is-active' : '';
+  const title = inWordBook ? '已收藏，点击标记为熟悉' : '收藏单词';
+  return `<button
+    id="${id}"
+    class="wh-heart-btn${activeClass}"
+    type="button"
+    aria-label="${title}"
+    aria-pressed="${inWordBook ? 'true' : 'false'}"
+    title="${title}"
+  >♥</button>`;
+}
+
+function updateHeartButton(button, active) {
+  const title = active ? '已收藏，点击标记为熟悉' : '收藏单词';
+  button.classList.toggle('is-active', active);
+  button.setAttribute('aria-pressed', String(active));
+  button.setAttribute('aria-label', title);
+  button.title = title;
+}
+
+function bindWordBookHeart(buttonId, word, entry, initiallyInWordBook) {
+  let inWordBook = initiallyInWordBook;
+
+  document.getElementById(buttonId)?.addEventListener('click', async () => {
+    const button = document.getElementById(buttonId);
+    if (button.classList.contains('is-loading')) return;
+    button.classList.add('is-loading');
+    button.disabled = true;
+
+    try {
+      const response = inWordBook
+        ? await chrome.runtime.sendMessage({
+            type: 'REMOVE_FROM_WORD_BOOK',
+            payload: { word }
+          })
+        : await chrome.runtime.sendMessage({
+            type: 'ADD_TO_WORD_BOOK',
+            payload: { word, entry }
+          });
+      const succeeded = inWordBook
+        ? response?.ok && response?.data?.success
+        : response?.ok;
+      if (!succeeded) throw new Error('WORD_BOOK_UPDATE_FAILED');
+
+      inWordBook = !inWordBook;
+      updateHeartButton(button, inWordBook);
+      button.classList.add('is-just-toggled');
+      setTimeout(() => button.classList.remove('is-just-toggled'), 420);
+      highlightWordsOnPage();
+    } catch (error) {
+      console.error('更新单词收藏状态失败:', error);
+      button.classList.add('is-error');
+      setTimeout(() => button.classList.remove('is-error'), 700);
+    } finally {
+      button.classList.remove('is-loading');
+      button.disabled = false;
+    }
+  });
 }
 
 function removeCard() {
@@ -754,19 +655,41 @@ chrome.runtime.onMessage.addListener((message) => {
   }
 })();
 
-// 渐变主题集合 & 选择器
-const GRADIENTS = [
-  'linear-gradient(135deg, #7F7FD5 0%, #86A8E7 50%, #91EAE4 100%)',
-  'linear-gradient(135deg, #FAD961 0%, #F76B1C 100%)',
-  'linear-gradient(135deg, #A1FFCE 0%, #FAFFD1 100%)',
-  'linear-gradient(135deg, #FF9A9E 0%, #FAD0C4 99%, #FAD0C4 100%)',
-  'linear-gradient(135deg, #a18cd1 0%, #fbc2eb 100%)',
-  'linear-gradient(135deg, #FDEB71 0%, #F8D800 100%)',
-  'linear-gradient(135deg, #B2FEFA 0%, #0ED2F7 100%)',
-  'linear-gradient(135deg, #C3CFE2 0%, #E2EAFC 100%)'
+// 卡片渐变主题：经典渐变、混合渐变和高饱和彩虹渐变
+const CARD_THEMES = [
+  { tone: 'dark', background: 'linear-gradient(135deg, #5b5bd6 0%, #648de5 48%, #3296ad 100%)' },
+  { tone: 'light', background: 'linear-gradient(135deg, #ff7582 0%, #ff9d68 48%, #ffd166 100%)' },
+  { tone: 'dark', background: 'linear-gradient(135deg, #087f75 0%, #15977a 46%, #2da562 100%)' },
+  { tone: 'dark', background: 'linear-gradient(135deg, #8e44ad 0%, #b44ac0 46%, #d9547c 100%)' },
+  { tone: 'dark', background: 'linear-gradient(145deg, #111b3f 0%, #244c91 52%, #287ca9 100%)' },
+  { tone: 'dark', background: 'linear-gradient(135deg, #6d2fa0 0%, #9b3f9c 50%, #c44770 100%)' },
+  { tone: 'dark', background: 'linear-gradient(135deg, #3b4371 0%, #5d4d9c 48%, #c96f79 100%)' },
+  { tone: 'dark', background: 'linear-gradient(135deg, #005c97 0%, #2474b5 50%, #318db8 100%)' },
+  { tone: 'light', background: 'linear-gradient(135deg, #d9f99d 0%, #6ee7b7 50%, #67e8f9 100%)' },
+  { tone: 'light', background: 'linear-gradient(135deg, #fde68a 0%, #fda4af 50%, #c4b5fd 100%)' },
+  { tone: 'light', background: 'linear-gradient(135deg, #bae6fd 0%, #a7f3d0 52%, #e0e7ff 100%)' },
+  { tone: 'light', background: 'linear-gradient(135deg, #fbcfe8 0%, #ddd6fe 48%, #bae6fd 100%)' },
+
+  // 混合渐变：多层径向色彩叠加在线性底色上
+  { tone: 'dark', background: 'radial-gradient(circle at 12% 18%, rgba(255, 82, 145, .96) 0%, transparent 38%), radial-gradient(circle at 88% 16%, rgba(67, 203, 255, .92) 0%, transparent 40%), radial-gradient(circle at 65% 92%, rgba(120, 78, 255, .9) 0%, transparent 46%), linear-gradient(145deg, #512da8 0%, #172554 100%)' },
+  { tone: 'dark', background: 'radial-gradient(circle at 18% 12%, rgba(255, 193, 87, .88) 0%, transparent 34%), radial-gradient(circle at 85% 22%, rgba(255, 88, 128, .9) 0%, transparent 42%), radial-gradient(circle at 56% 100%, rgba(124, 58, 237, .92) 0%, transparent 48%), linear-gradient(140deg, #a82c74 0%, #4c1d95 100%)' },
+  { tone: 'dark', background: 'radial-gradient(circle at 10% 80%, rgba(52, 211, 153, .92) 0%, transparent 40%), radial-gradient(circle at 92% 15%, rgba(34, 211, 238, .84) 0%, transparent 42%), linear-gradient(135deg, #12345b 0%, #0f766e 52%, #115e59 100%)' },
+  { tone: 'dark', background: 'radial-gradient(circle at 16% 18%, rgba(251, 113, 133, .86) 0%, transparent 36%), radial-gradient(circle at 86% 78%, rgba(96, 165, 250, .86) 0%, transparent 44%), linear-gradient(135deg, #4338ca 0%, #7e22ce 48%, #9f1239 100%)' },
+  { tone: 'dark', background: 'radial-gradient(circle at 86% 8%, rgba(253, 196, 71, .78) 0%, transparent 34%), radial-gradient(circle at 12% 88%, rgba(45, 212, 191, .82) 0%, transparent 44%), linear-gradient(135deg, #0f766e 0%, #2563eb 52%, #4338ca 100%)' },
+
+  // 彩虹主题：保留深色底层，确保白色文字在各色段都清晰
+  { tone: 'dark', background: 'linear-gradient(rgba(15,23,42,.18), rgba(15,23,42,.18)), linear-gradient(118deg, #e32850 0%, #d96600 18%, #ad8700 34%, #168254 51%, #0874c4 69%, #5149bd 84%, #9b3fc4 100%)' },
+  { tone: 'dark', background: 'linear-gradient(rgba(15,23,42,.2), rgba(15,23,42,.2)), radial-gradient(circle at 18% 18%, rgba(255,255,255,.22) 0%, transparent 25%), conic-gradient(from 215deg at 68% 32%, #e72e54 0deg, #dd8500 56deg, #20a54b 116deg, #0876d0 185deg, #504ec4 245deg, #aa43d4 305deg, #e72e54 360deg)' },
+  { tone: 'dark', background: 'linear-gradient(rgba(15,23,42,.16), rgba(15,23,42,.16)), radial-gradient(circle at 50% 115%, rgba(255,255,255,.16) 0%, transparent 42%), linear-gradient(110deg, #cf344d 0%, #d2711c 20%, #987f00 36%, #137b5b 52%, #126eaa 68%, #514ab0 84%, #91339c 100%)' }
 ];
 
 function pickGradient() {
-  const idx = Math.floor(Math.random() * GRADIENTS.length);
-  return GRADIENTS[idx];
+  const idx = Math.floor(Math.random() * CARD_THEMES.length);
+  return CARD_THEMES[idx];
+}
+
+function applyRandomCardTheme(card) {
+  const theme = pickGradient();
+  card.style.setProperty('--wh-gradient', theme.background);
+  card.dataset.whTone = theme.tone;
 }

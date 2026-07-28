@@ -2,9 +2,11 @@
 
 const STORAGE_KEYS = {
   WORD_BOOK: 'word_book',           // Map<string, WordItem>
+  REVIEW_PROGRESS: 'review_progress', // Map<string, ReviewProgress>
   SETTINGS: 'settings',             // { highlight: boolean, language: string }
   QUERY_STATS: 'query_stats',       // Map<string, { count: number, lastQueried: number }>
-  DAILY_STATS: 'daily_stats'        // Map<string, { date: string, words: string[], count: number }>
+  DAILY_STATS: 'daily_stats',       // Map<string, { date: string, words: string[], count: number }>
+  ACTIVITY_STATS: 'activity_stats'  // Map<string, DailyActivity>
 };
 
 const CONTEXT_MENU_IDS = {
@@ -28,37 +30,36 @@ const REVIEW_INTERVALS = [
  * WordItem 数据结构
  * @typedef {Object} WordItem
  * @property {string} word - 单词
- * @property {string} definition - 中文释义（或英文释义）
- * @property {number} queryCount - 查询次数
- * @property {number} createdAt - 首次记录时间（时间戳）
- * @property {number} nextReviewAt - 下次复习时间（时间戳）
- * @property {number} reviewStage - 当前复习阶段（0-8）
- * @property {number} correctCount - 答对次数
- * @property {number} wrongCount - 答错次数
- * @property {Object} translation - 完整翻译对象（保持兼容性）
- * @property {boolean} highlight - 是否高亮显示
+ * @property {string} meaning - 单词含义
+ * @property {string} partOfSpeech - 词性
  */
 
 chrome.runtime.onInstalled.addListener(async () => {
-  const { WORD_BOOK, SETTINGS, QUERY_STATS, DAILY_STATS } = STORAGE_KEYS;
+  const { WORD_BOOK, REVIEW_PROGRESS, SETTINGS, QUERY_STATS, DAILY_STATS, ACTIVITY_STATS } = STORAGE_KEYS;
   const init = {};
   const { [WORD_BOOK]: wb } = await chrome.storage.local.get(WORD_BOOK);
   if (!wb) init[WORD_BOOK] = {};
+  const { [REVIEW_PROGRESS]: rp } = await chrome.storage.local.get(REVIEW_PROGRESS);
+  if (!rp) init[REVIEW_PROGRESS] = {};
   const { [SETTINGS]: s } = await chrome.storage.local.get(SETTINGS);
   if (!s) init[SETTINGS] = getDefaultSettings();
   const { [QUERY_STATS]: qs } = await chrome.storage.local.get(QUERY_STATS);
   if (!qs) init[QUERY_STATS] = {};
   const { [DAILY_STATS]: ds } = await chrome.storage.local.get(DAILY_STATS);
   if (!ds) init[DAILY_STATS] = {};
+  const { [ACTIVITY_STATS]: activity } = await chrome.storage.local.get(ACTIVITY_STATS);
+  if (!activity) init[ACTIVITY_STATS] = {};
   if (Object.keys(init).length) {
     await chrome.storage.local.set(init);
   }
+  await migrateWordBook();
   // 配置每日复习提醒
   createTranslationContextMenus();
   chrome.alarms.create('dailyReview', { delayInMinutes: 1, periodInMinutes: 60 * 24 });
 });
 
-chrome.runtime.onStartup?.addListener(() => {
+chrome.runtime.onStartup?.addListener(async () => {
+  await migrateWordBook();
   createTranslationContextMenus();
 });
 
@@ -106,6 +107,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       case 'LOOKUP_TRANSLATION': {
         // 记录查询统计
         await recordQueryStat(message.payload.word);
+        await recordLearningActivity('query', message.payload.word);
         const result = await translate(message.payload.word, message.payload.from || 'en', message.payload.to || 'zh');
         sendResponse({ ok: true, data: result });
         return;
@@ -117,12 +119,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       }
       case 'RECORD_QUERY_STAT': {
         await recordQueryStat(message.payload.word);
+        await recordLearningActivity('query', message.payload.word);
         const data = await getQueryStats(message.payload.word);
         sendResponse({ ok: true, data });
         return;
       }
       case 'ADD_TO_WORD_BOOK': {
-        const data = await addToWordBook(message.payload.word, message.payload.translation);
+        const data = await addToWordBook(
+          message.payload.word,
+          message.payload.entry || message.payload.translation || message.payload
+        );
         sendResponse({ ok: true, data });
         return;
       }
@@ -167,6 +173,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       case 'GET_DAILY_STATS': {
         const data = await getDailyStats(message.payload?.startDate, message.payload?.endDate);
         sendResponse({ ok: true, data });
+        return;
+      }
+      case 'GET_WEEKLY_SUMMARY': {
+        const data = await getWeeklySummary();
+        sendResponse({ ok: true, data });
+        return;
+      }
+      case 'GENERATE_WEEKLY_REVIEW': {
+        const summary = await getWeeklySummary();
+        const review = await generateWeeklyReview(summary);
+        sendResponse({ ok: true, data: { summary, review } });
         return;
       }
       case 'IMPORT_WORD_BOOK': {
@@ -323,6 +340,8 @@ async function translate(word, from, to) {
   return {
     word,
     phonetic: dictResult?.phonetic || '',
+    meaning: chineseText || dictResult?.explains?.[0] || `${word} (${from}->${to})`,
+    partOfSpeech: dictResult?.partOfSpeech || '',
     explains
   };
 }
@@ -342,14 +361,18 @@ async function fetchDictionaryDefinitions(word) {
       (entry.phonetics || []).find(p => p.text)?.text || '';
 
     const explains = [];
+    const partsOfSpeech = [];
     for (const meaning of (entry.meanings || [])) {
       const pos = meaning.partOfSpeech || '';
+      if (pos && !partsOfSpeech.includes(pos)) partsOfSpeech.push(pos);
       for (const def of (meaning.definitions || []).slice(0, 2)) {
         explains.push(pos ? `${pos}. ${def.definition}` : def.definition);
       }
     }
 
-    return explains.length ? { phonetic, explains } : null;
+    return explains.length
+      ? { phonetic, explains, partOfSpeech: partsOfSpeech.join(' / ') }
+      : null;
   } catch (_) {
     return null;
   }
@@ -525,9 +548,7 @@ function buildDeepSeekSelectionRequest({ mode, selectedText, context, targetLang
         selectedText: 'string',
         meaningInContext: 'string',
         partOfSpeech: 'string',
-        sentenceTranslation: 'string',
-        explanation: 'string',
-        alternatives: ['string']
+        explanation: 'string'
       }
     };
   }
@@ -585,9 +606,7 @@ function normalizeDeepSeekResult(mode, content, requestJson, rawResponse) {
         selectedText: requestJson.selectedText,
         meaningInContext: content,
         partOfSpeech: '',
-        sentenceTranslation: '',
-        explanation: content,
-        alternatives: []
+        explanation: content
       }
     : {
         type: 'sentence_translation',
@@ -623,55 +642,125 @@ function parseJsonLikeResponse(content) {
 // ===================== DeepSeek selection translation end =====================
 
 async function getWordBook() {
-  const { [STORAGE_KEYS.WORD_BOOK]: book } = await chrome.storage.local.get(STORAGE_KEYS.WORD_BOOK);
-  return book || {};
+  return migrateWordBook();
 }
 
-async function addToWordBook(word, translation) {
-  const book = await getWordBook();
-  const now = Date.now();
-  const old = book[word] || null;
-  
-  // 提取定义文本
-  const definition = extractDefinition(translation);
-  
-  // 创建新的WordItem结构
-  book[word] = {
-    word,
-    definition,
-    queryCount: (old?.queryCount || 0) + 1,
-    createdAt: old?.createdAt || now,
-    nextReviewAt: old?.nextReviewAt || now, // 立即可复习
-    reviewStage: old?.reviewStage || 0,
-    correctCount: old?.correctCount || 0,
-    wrongCount: old?.wrongCount || 0,
-    translation, // 保持完整翻译对象以兼容现有功能
-    highlight: true
+function normalizeWord(word) {
+  return String(word || '').trim().toLowerCase();
+}
+
+function extractMeaning(source) {
+  if (!source) return '暂无释义';
+  const deepseek = source.deepseek || source.translation?.deepseek || {};
+  const explains = source.explains || source.translation?.explains || [];
+  return String(
+    source.meaning ||
+    source.meaningInContext ||
+    source.definition ||
+    (typeof source.translation === 'string' ? source.translation : '') ||
+    deepseek.meaningInContext ||
+    explains[0] ||
+    '暂无释义'
+  ).trim();
+}
+
+function extractPartOfSpeech(source) {
+  if (!source) return '';
+  const deepseek = source.deepseek || source.translation?.deepseek || {};
+  const explicit = source.partOfSpeech || source.pos || deepseek.partOfSpeech;
+  if (explicit) return String(explicit).trim();
+
+  const explains = source.explains || source.translation?.explains || [];
+  const knownParts = new Set([
+    'noun', 'verb', 'adjective', 'adverb', 'pronoun', 'preposition',
+    'conjunction', 'interjection', 'determiner', 'article', 'phrase'
+  ]);
+  const found = [];
+  for (const explanation of explains) {
+    const match = String(explanation).match(/^([a-z]+)\.\s+/i);
+    const value = match?.[1]?.toLowerCase();
+    if (value && knownParts.has(value) && !found.includes(value)) found.push(value);
+  }
+  return found.join(' / ');
+}
+
+function compactWordItem(word, source) {
+  return {
+    word: String(source?.word || word || '').trim(),
+    meaning: extractMeaning(source),
+    partOfSpeech: extractPartOfSpeech(source)
   };
-  
-  // 如果是新单词，记录到每日统计中
-  if (!old) {
-    await recordDailyWordAddition(word);
-  }
-  
-  await chrome.storage.local.set({ [STORAGE_KEYS.WORD_BOOK]: book });
-  return book[word];
 }
 
-// 从翻译对象中提取定义文本
-function extractDefinition(translation) {
-  if (!translation) return '';
-  
-  // 如果有explains数组，取第一个作为主要定义
-  if (translation.explains && translation.explains.length > 0) {
-    return translation.explains[0];
+function createReviewProgress(source = {}, fallback = {}) {
+  const now = Date.now();
+  return {
+    createdAt: source.createdAt || source.addedAt || fallback.createdAt || now,
+    nextReviewAt: source.nextReviewAt ?? fallback.nextReviewAt ?? now,
+    reviewStage: source.reviewStage ?? fallback.reviewStage ?? 0,
+    correctCount: source.correctCount ?? fallback.correctCount ?? 0,
+    wrongCount: source.wrongCount ?? fallback.wrongCount ?? 0
+  };
+}
+
+async function migrateWordBook() {
+  const {
+    [STORAGE_KEYS.WORD_BOOK]: storedBook,
+    [STORAGE_KEYS.REVIEW_PROGRESS]: storedProgress
+  } = await chrome.storage.local.get([
+    STORAGE_KEYS.WORD_BOOK,
+    STORAGE_KEYS.REVIEW_PROGRESS
+  ]);
+  const sourceBook = storedBook || {};
+  const sourceProgress = storedProgress || {};
+  const book = {};
+  const progress = {};
+
+  for (const [storedKey, item] of Object.entries(sourceBook)) {
+    const key = normalizeWord(item?.word || storedKey);
+    if (!key) continue;
+    book[key] = compactWordItem(key, item);
+    progress[key] = createReviewProgress(item, sourceProgress[key]);
   }
-  
-  // 如果没有explains，尝试其他字段
-  if (translation.definition) return translation.definition;
-  if (translation.meaning) return translation.meaning;
-  
-  return '暂无释义';
+
+  const bookChanged = JSON.stringify(book) !== JSON.stringify(sourceBook);
+  const progressChanged = JSON.stringify(progress) !== JSON.stringify(sourceProgress);
+  if (bookChanged || progressChanged) {
+    await chrome.storage.local.set({
+      [STORAGE_KEYS.WORD_BOOK]: book,
+      [STORAGE_KEYS.REVIEW_PROGRESS]: progress
+    });
+  }
+  return book;
+}
+
+async function addToWordBook(word, source) {
+  const book = await getWordBook();
+  const key = normalizeWord(word);
+  if (!key) throw new Error('单词不能为空');
+
+  const old = book[key] || null;
+  book[key] = compactWordItem(key, {
+    ...(old || {}),
+    ...(source || {}),
+    word: String(word).trim()
+  });
+
+  const { [STORAGE_KEYS.REVIEW_PROGRESS]: storedProgress } =
+    await chrome.storage.local.get(STORAGE_KEYS.REVIEW_PROGRESS);
+  const progress = storedProgress || {};
+  progress[key] = createReviewProgress(progress[key]);
+
+  if (!old) {
+    await recordDailyWordAddition(key);
+    await recordLearningActivity('favorite', key);
+  }
+
+  await chrome.storage.local.set({
+    [STORAGE_KEYS.WORD_BOOK]: book,
+    [STORAGE_KEYS.REVIEW_PROGRESS]: progress
+  });
+  return book[key];
 }
 
 // 复习调度逻辑
@@ -687,41 +776,51 @@ function scheduleNextReview(reviewStage) {
 // 更新复习状态
 async function updateReviewStatus(word, isCorrect) {
   const book = await getWordBook();
-  const item = book[word];
+  const key = normalizeWord(word);
+  const item = book[key];
   
   if (!item) {
     throw new Error('单词不存在');
   }
-  
-  const now = Date.now();
+
+  const { [STORAGE_KEYS.REVIEW_PROGRESS]: storedProgress } =
+    await chrome.storage.local.get(STORAGE_KEYS.REVIEW_PROGRESS);
+  const progress = storedProgress || {};
+  const itemProgress = createReviewProgress(progress[key]);
   
   if (isCorrect) {
     // 答对：进入下一阶段
-    item.correctCount += 1;
-    item.reviewStage = Math.min(item.reviewStage + 1, REVIEW_INTERVALS.length - 1);
+    itemProgress.correctCount += 1;
+    itemProgress.reviewStage = Math.min(itemProgress.reviewStage + 1, REVIEW_INTERVALS.length - 1);
   } else {
     // 答错：退回上一阶段（最少回到阶段0）
-    item.wrongCount += 1;
-    item.reviewStage = Math.max(0, item.reviewStage - 1);
+    itemProgress.wrongCount += 1;
+    itemProgress.reviewStage = Math.max(0, itemProgress.reviewStage - 1);
   }
   
   // 更新下次复习时间
-  item.nextReviewAt = scheduleNextReview(item.reviewStage);
+  itemProgress.nextReviewAt = scheduleNextReview(itemProgress.reviewStage);
+  progress[key] = itemProgress;
   
-  await chrome.storage.local.set({ [STORAGE_KEYS.WORD_BOOK]: book });
-  return item;
+  await chrome.storage.local.set({ [STORAGE_KEYS.REVIEW_PROGRESS]: progress });
+  await recordLearningActivity('review', key);
+  return { ...item, definition: item.meaning, ...itemProgress };
 }
 
 // 获取待复习的单词
 async function getWordsForReview(limit = 5) {
   const book = await getWordBook();
+  const { [STORAGE_KEYS.REVIEW_PROGRESS]: storedProgress } =
+    await chrome.storage.local.get(STORAGE_KEYS.REVIEW_PROGRESS);
+  const progress = storedProgress || {};
   const now = Date.now();
   const wordsForReview = [];
   
   for (const [word, item] of Object.entries(book)) {
+    const itemProgress = createReviewProgress(progress[word]);
     // 检查是否到了复习时间且未完全掌握
-    if (item.nextReviewAt <= now && item.reviewStage < REVIEW_INTERVALS.length - 1) {
-      wordsForReview.push(item);
+    if (itemProgress.nextReviewAt <= now && itemProgress.reviewStage < REVIEW_INTERVALS.length - 1) {
+      wordsForReview.push({ ...item, definition: item.meaning, ...itemProgress });
     }
   }
   
@@ -789,20 +888,26 @@ async function getQueryStats(word) {
 
 // 检查单词/短语是否在单词本中（规范化：去首尾空格、转小写）
 async function checkWordInBook(word) {
-  const { [STORAGE_KEYS.WORD_BOOK]: wordBook } = await chrome.storage.local.get(STORAGE_KEYS.WORD_BOOK);
-  const currentWordBook = wordBook || {};
-  const key = word.trim().toLowerCase();
+  const currentWordBook = await getWordBook();
+  const key = normalizeWord(word);
   return { inBook: !!currentWordBook[key] };
 }
 
 // 单词本管理相关函数
 async function removeFromWordBook(word) {
-  const { [STORAGE_KEYS.WORD_BOOK]: wordBook } = await chrome.storage.local.get(STORAGE_KEYS.WORD_BOOK);
-  const currentWordBook = wordBook || {};
+  const currentWordBook = await getWordBook();
+  const key = normalizeWord(word);
   
-  if (currentWordBook[word]) {
-    delete currentWordBook[word];
-    await chrome.storage.local.set({ [STORAGE_KEYS.WORD_BOOK]: currentWordBook });
+  if (currentWordBook[key]) {
+    delete currentWordBook[key];
+    const { [STORAGE_KEYS.REVIEW_PROGRESS]: storedProgress } =
+      await chrome.storage.local.get(STORAGE_KEYS.REVIEW_PROGRESS);
+    const progress = storedProgress || {};
+    delete progress[key];
+    await chrome.storage.local.set({
+      [STORAGE_KEYS.WORD_BOOK]: currentWordBook,
+      [STORAGE_KEYS.REVIEW_PROGRESS]: progress
+    });
     return { success: true, message: '单词已从单词本中删除' };
   } else {
     return { success: false, message: '单词不在单词本中' };
@@ -811,7 +916,7 @@ async function removeFromWordBook(word) {
 
 // 记录每日单词添加统计
 async function recordDailyWordAddition(word) {
-  const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD格式
+  const today = formatLocalDate(new Date());
   const { [STORAGE_KEYS.DAILY_STATS]: dailyStats } = await chrome.storage.local.get(STORAGE_KEYS.DAILY_STATS);
   const stats = dailyStats || {};
   
@@ -855,32 +960,193 @@ async function getDailyStats(startDate, endDate) {
   return filteredStats;
 }
 
-// 导入单词本（合并，不覆盖已存在的条目）
-async function importWordBook(words) {
-  const book = await getWordBook();
-  const now = Date.now();
-  let importCount = 0;
+function formatLocalDate(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
 
-  for (const [key, item] of Object.entries(words || {})) {
-    if (!book[key]) {
-      book[key] = {
-        word: item.word || key,
-        definition: item.definition || '',
-        queryCount: item.queryCount || 0,
-        createdAt: item.createdAt || now,
-        nextReviewAt: item.nextReviewAt || now,
-        reviewStage: item.reviewStage || 0,
-        correctCount: item.correctCount || 0,
-        wrongCount: item.wrongCount || 0,
-        translation: item.translation || null,
-        highlight: item.highlight !== undefined ? item.highlight : true
-      };
-      importCount++;
-      // 记录每日统计
-      await recordDailyWordAddition(item.word || key);
+function createDailyActivity(date) {
+  return {
+    date,
+    queryCount: 0,
+    queriedWords: [],
+    favoriteCount: 0,
+    favoriteWords: [],
+    reviewCount: 0,
+    reviewedWords: []
+  };
+}
+
+async function recordLearningActivity(type, word) {
+  const key = normalizeWord(word);
+  if (!key) return;
+  const date = formatLocalDate(new Date());
+  const { [STORAGE_KEYS.ACTIVITY_STATS]: storedStats } =
+    await chrome.storage.local.get(STORAGE_KEYS.ACTIVITY_STATS);
+  const stats = storedStats || {};
+  const activity = {
+    ...createDailyActivity(date),
+    ...(stats[date] || {})
+  };
+
+  const fields = {
+    query: ['queryCount', 'queriedWords'],
+    favorite: ['favoriteCount', 'favoriteWords'],
+    review: ['reviewCount', 'reviewedWords']
+  };
+  const [countField, wordsField] = fields[type] || [];
+  if (!countField) return;
+
+  activity[countField] = (activity[countField] || 0) + 1;
+  activity[wordsField] = Array.isArray(activity[wordsField]) ? activity[wordsField] : [];
+  if (!activity[wordsField].includes(key)) activity[wordsField].push(key);
+  stats[date] = activity;
+  await chrome.storage.local.set({ [STORAGE_KEYS.ACTIVITY_STATS]: stats });
+}
+
+function getCurrentWeekRange() {
+  const now = new Date();
+  const start = new Date(now);
+  const day = start.getDay();
+  start.setDate(start.getDate() - (day === 0 ? 6 : day - 1));
+  start.setHours(0, 0, 0, 0);
+
+  const end = new Date(start);
+  end.setDate(end.getDate() + 6);
+  end.setHours(23, 59, 59, 999);
+  return { start, end, now };
+}
+
+async function getWeeklySummary() {
+  const { start, end, now } = getCurrentWeekRange();
+  const {
+    [STORAGE_KEYS.ACTIVITY_STATS]: storedActivity,
+    [STORAGE_KEYS.QUERY_STATS]: storedQueries,
+    [STORAGE_KEYS.DAILY_STATS]: storedFavorites
+  } = await chrome.storage.local.get([
+    STORAGE_KEYS.ACTIVITY_STATS,
+    STORAGE_KEYS.QUERY_STATS,
+    STORAGE_KEYS.DAILY_STATS
+  ]);
+  const activityStats = storedActivity || {};
+  const queryStats = storedQueries || {};
+  const dailyStats = storedFavorites || {};
+  const queriedWords = new Set();
+  const favoriteWords = new Set();
+  const reviewedWords = new Set();
+  let queryEvents = 0;
+  let favoriteEvents = 0;
+  let reviewEvents = 0;
+
+  for (let date = new Date(start); date <= now; date.setDate(date.getDate() + 1)) {
+    const dateKey = formatLocalDate(date);
+    const activity = activityStats[dateKey] || {};
+    queryEvents += activity.queryCount || 0;
+    favoriteEvents += activity.favoriteCount || 0;
+    reviewEvents += activity.reviewCount || 0;
+    (activity.queriedWords || []).forEach(word => queriedWords.add(normalizeWord(word)));
+    (activity.favoriteWords || []).forEach(word => favoriteWords.add(normalizeWord(word)));
+    (activity.reviewedWords || []).forEach(word => reviewedWords.add(normalizeWord(word)));
+
+    // 兼容升级前已有的收藏记录。
+    (dailyStats[dateKey]?.words || []).forEach(word => favoriteWords.add(normalizeWord(word)));
+  }
+
+  // query_stats 只能还原本周查询过的独立单词，用于兼容升级前数据。
+  for (const [word, stat] of Object.entries(queryStats)) {
+    if (stat?.lastQueried >= start.getTime() && stat.lastQueried <= end.getTime()) {
+      queriedWords.add(normalizeWord(word));
     }
   }
 
-  await chrome.storage.local.set({ [STORAGE_KEYS.WORD_BOOK]: book });
+  const cleanWords = set => [...set].filter(Boolean);
+  const queryWordList = cleanWords(queriedWords);
+  const favoriteWordList = cleanWords(favoriteWords);
+  const reviewedWordList = cleanWords(reviewedWords);
+  return {
+    startDate: formatLocalDate(start),
+    endDate: formatLocalDate(end),
+    generatedAt: now.toISOString(),
+    queries: queryWordList.length,
+    favorites: favoriteWordList.length,
+    reviews: reviewedWordList.length,
+    queryEvents: Math.max(queryEvents, queryWordList.length),
+    favoriteEvents: Math.max(favoriteEvents, favoriteWordList.length),
+    reviewEvents: Math.max(reviewEvents, reviewedWordList.length),
+    queriedWords: queryWordList,
+    favoriteWords: favoriteWordList,
+    reviewedWords: reviewedWordList
+  };
+}
+
+async function generateWeeklyReview(summary) {
+  const settings = await getSettings();
+  const deepseek = settings.deepseek || {};
+  const apiKey = String(deepseek.apiKey || '').trim();
+  if (!apiKey) throw new Error('DEEPSEEK_API_KEY_MISSING');
+
+  const resp = await fetch(DEEPSEEK_CHAT_ENDPOINT, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${apiKey}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      model: deepseek.model || 'deepseek-chat',
+      temperature: 0.9,
+      messages: [
+        {
+          role: 'system',
+          content: [
+            '你是一位犀利、有梗但讲道理的英语学习教练。',
+            '根据用户一周的查询、收藏和复习数据，写一段中文锐评。',
+            '先精准指出学习习惯中的问题，再给一个明确可执行的下周建议。',
+            '语气可以毒舌，但不要人身攻击，不要虚构数据。',
+            '控制在 120 到 220 个汉字，只返回正文。'
+          ].join('\n')
+        },
+        {
+          role: 'user',
+          content: JSON.stringify(summary, null, 2)
+        }
+      ]
+    })
+  });
+  const json = await resp.json().catch(() => null);
+  if (!resp.ok) {
+    const detail = json?.error?.message || `HTTP_${resp.status}`;
+    throw new Error(`DEEPSEEK_REQUEST_FAILED:${detail}`);
+  }
+  const content = json?.choices?.[0]?.message?.content;
+  if (!content) throw new Error('DEEPSEEK_EMPTY_RESPONSE');
+  return String(content).trim();
+}
+
+// 导入单词本（合并，不覆盖已存在的条目）
+async function importWordBook(words) {
+  const book = await getWordBook();
+  const { [STORAGE_KEYS.REVIEW_PROGRESS]: storedProgress } =
+    await chrome.storage.local.get(STORAGE_KEYS.REVIEW_PROGRESS);
+  const progress = storedProgress || {};
+  let importCount = 0;
+
+  for (const [storedKey, item] of Object.entries(words || {})) {
+    const key = normalizeWord(item?.word || storedKey);
+    if (!key) continue;
+    if (!book[key]) {
+      book[key] = compactWordItem(key, item);
+      progress[key] = createReviewProgress(item, progress[key]);
+      importCount++;
+      // 记录每日统计
+      await recordDailyWordAddition(key);
+    }
+  }
+
+  await chrome.storage.local.set({
+    [STORAGE_KEYS.WORD_BOOK]: book,
+    [STORAGE_KEYS.REVIEW_PROGRESS]: progress
+  });
   return { importCount, total: Object.keys(book).length };
 }

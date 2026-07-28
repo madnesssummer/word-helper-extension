@@ -1,8 +1,10 @@
-// 热力图页面逻辑
+// 按月展示学习热力图。
 class HeatmapPage {
   constructor() {
-    this.currentYear = new Date().getFullYear();
+    const now = new Date();
+    this.currentMonth = new Date(now.getFullYear(), now.getMonth(), 1);
     this.dailyStats = {};
+    this.totalWordCount = 0;
     this.tooltip = document.getElementById('tooltip');
     this.init();
   }
@@ -11,8 +13,8 @@ class HeatmapPage {
     try {
       await this.loadData();
       this.setupEventListeners();
-      this.renderHeatmap();
-      this.updateStats();
+      this.syncMonthSelector();
+      this.render();
       this.hideLoading();
     } catch (error) {
       console.error('初始化热力图失败:', error);
@@ -20,176 +22,129 @@ class HeatmapPage {
     }
   }
 
-  async loadData() {
+  sendMessage(message) {
     return new Promise((resolve, reject) => {
-      // 获取一年的日期范围
-      const startDate = new Date(this.currentYear, 0, 1);
-      const endDate = new Date(this.currentYear, 11, 31);
-      
-      chrome.runtime.sendMessage({
-        action: 'GET_DAILY_STATS',
-        startDate: startDate.toISOString().split('T')[0],
-        endDate: endDate.toISOString().split('T')[0]
-      }, (response) => {
+      chrome.runtime.sendMessage(message, response => {
         if (chrome.runtime.lastError) {
-          reject(chrome.runtime.lastError);
+          reject(new Error(chrome.runtime.lastError.message));
           return;
         }
-        
-        if (response && response.success) {
-          this.dailyStats = response.data || {};
-          resolve();
-        } else {
-          reject(new Error('获取数据失败'));
+        if (!response?.ok) {
+          reject(new Error(response?.error || '获取数据失败'));
+          return;
         }
+        resolve(response.data);
       });
     });
+  }
+
+  async loadData() {
+    const [dailyStats, wordBook] = await Promise.all([
+      this.sendMessage({ type: 'GET_DAILY_STATS', payload: {} }),
+      this.sendMessage({ type: 'GET_WORD_BOOK', payload: {} })
+    ]);
+    this.dailyStats = dailyStats || {};
+    this.totalWordCount = Object.keys(wordBook || {}).length;
   }
 
   setupEventListeners() {
-    // 年份选择器
-    const yearSelector = document.getElementById('yearSelector');
-    yearSelector.addEventListener('change', (e) => {
-      this.currentYear = parseInt(e.target.value);
-      this.loadData().then(() => {
-        this.renderHeatmap();
-        this.updateStats();
-      });
+    document.getElementById('monthSelector').addEventListener('change', event => {
+      const [year, month] = String(event.target.value).split('-').map(Number);
+      if (!year || !month) return;
+      this.currentMonth = new Date(year, month - 1, 1);
+      this.render();
     });
 
-    // 初始化年份选择器选项
-    this.initYearSelector();
+    document.getElementById('previousMonth').addEventListener('click', () => {
+      this.changeMonth(-1);
+    });
+    document.getElementById('nextMonth').addEventListener('click', () => {
+      this.changeMonth(1);
+    });
+    document.getElementById('backBtn').addEventListener('click', () => window.close());
   }
 
-  initYearSelector() {
-    const yearSelector = document.getElementById('yearSelector');
-    const currentYear = new Date().getFullYear();
-    
-    // 清空现有选项
-    yearSelector.innerHTML = '';
-    
-    // 添加最近3年的选项
-    for (let year = currentYear; year >= currentYear - 2; year--) {
-      const option = document.createElement('option');
-      option.value = year;
-      option.textContent = `${year}年`;
-      if (year === this.currentYear) {
-        option.selected = true;
-      }
-      yearSelector.appendChild(option);
+  changeMonth(offset) {
+    this.currentMonth = new Date(
+      this.currentMonth.getFullYear(),
+      this.currentMonth.getMonth() + offset,
+      1
+    );
+    this.syncMonthSelector();
+    this.render();
+  }
+
+  syncMonthSelector() {
+    const year = this.currentMonth.getFullYear();
+    const month = String(this.currentMonth.getMonth() + 1).padStart(2, '0');
+    document.getElementById('monthSelector').value = `${year}-${month}`;
+  }
+
+  render() {
+    this.renderMonth();
+    this.updateStats();
+    document.getElementById('wordList').style.display = 'none';
+  }
+
+  renderMonth() {
+    const grid = document.getElementById('monthGrid');
+    grid.innerHTML = '';
+    const year = this.currentMonth.getFullYear();
+    const month = this.currentMonth.getMonth();
+    const firstDate = new Date(year, month, 1);
+    const daysInMonth = new Date(year, month + 1, 0).getDate();
+    const leadingEmptyDays = (firstDate.getDay() + 6) % 7;
+
+    for (let index = 0; index < leadingEmptyDays; index++) {
+      const empty = document.createElement('div');
+      empty.className = 'day empty';
+      grid.appendChild(empty);
+    }
+
+    for (let day = 1; day <= daysInMonth; day++) {
+      const date = new Date(year, month, day);
+      const dateKey = this.formatDate(date);
+      const dayStats = this.dailyStats[dateKey] || {};
+      const count = Number(dayStats.count || 0);
+      const words = Array.isArray(dayStats.words) ? dayStats.words : [];
+      const element = document.createElement('button');
+      element.type = 'button';
+      element.className = `day level-${this.getLevel(count)}`;
+      element.dataset.date = dateKey;
+      element.setAttribute(
+        'aria-label',
+        `${this.formatDateForDisplay(date)}，收藏 ${count} 个单词`
+      );
+      element.innerHTML = `
+        <span class="day-number">${day}</span>
+        ${count > 0 ? `<span class="day-count">${count} 个</span>` : ''}
+      `;
+      this.addDayEventListeners(element, date, count, words);
+      grid.appendChild(element);
     }
   }
 
-  renderHeatmap() {
-    this.renderMonths();
-    this.renderDays();
+  addDayEventListeners(element, date, count, words) {
+    element.addEventListener('mouseenter', event => {
+      this.showTooltip(event, date, count);
+    });
+    element.addEventListener('mouseleave', () => this.hideTooltip());
+    element.addEventListener('focus', event => this.showTooltip(event, date, count));
+    element.addEventListener('blur', () => this.hideTooltip());
+    element.addEventListener('click', () => this.showWordList(date, words));
   }
 
-  renderMonths() {
-    const monthsRow = document.getElementById('monthsRow');
-    monthsRow.innerHTML = '';
-    
-    const months = ['1月', '2月', '3月', '4月', '5月', '6月', 
-                   '7月', '8月', '9月', '10月', '11月', '12月'];
-    
-    months.forEach(month => {
-      const monthElement = document.createElement('div');
-      monthElement.className = 'month';
-      monthElement.textContent = month;
-      monthsRow.appendChild(monthElement);
-    });
-  }
+  showTooltip(event, date, count) {
+    const dateText = this.formatDateForDisplay(date);
+    this.tooltip.innerHTML = count
+      ? `${dateText}<br>收藏了 ${count} 个单词`
+      : `${dateText}<br>没有收藏新单词`;
+    this.tooltip.classList.add('show');
 
-  renderDays() {
-    const weeksContainer = document.getElementById('weeksContainer');
-    weeksContainer.innerHTML = '';
-    
-    // 获取年份的第一天和最后一天
-    const startDate = new Date(this.currentYear, 0, 1);
-    const endDate = new Date(this.currentYear, 11, 31);
-    
-    // 调整到周一开始
-    const firstDay = new Date(startDate);
-    const dayOfWeek = firstDay.getDay();
-    const daysToSubtract = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
-    firstDay.setDate(firstDay.getDate() - daysToSubtract);
-    
-    // 计算需要多少周
-    const totalDays = Math.ceil((endDate - firstDay) / (1000 * 60 * 60 * 24)) + 1;
-    const totalWeeks = Math.ceil(totalDays / 7);
-    
-    // 生成每周的格子
-    for (let week = 0; week < totalWeeks; week++) {
-      const weekElement = document.createElement('div');
-      weekElement.className = 'week';
-      
-      for (let day = 0; day < 7; day++) {
-        const currentDate = new Date(firstDay);
-        currentDate.setDate(firstDay.getDate() + week * 7 + day);
-        
-        const dayElement = document.createElement('div');
-        dayElement.className = 'day';
-        
-        // 只显示当前年份的日期
-        if (currentDate.getFullYear() === this.currentYear) {
-          const dateStr = this.formatDate(currentDate);
-          const wordCount = this.dailyStats[dateStr] ? this.dailyStats[dateStr].count : 0;
-          const words = this.dailyStats[dateStr] ? this.dailyStats[dateStr].words : [];
-          
-          // 设置颜色等级
-          dayElement.classList.add(`level-${this.getLevel(wordCount)}`);
-          
-          // 添加数据属性
-          dayElement.dataset.date = dateStr;
-          dayElement.dataset.count = wordCount;
-          dayElement.dataset.words = JSON.stringify(words);
-          
-          // 添加鼠标事件
-          this.addDayEventListeners(dayElement, currentDate, wordCount, words);
-        } else {
-          dayElement.style.visibility = 'hidden';
-        }
-        
-        weekElement.appendChild(dayElement);
-      }
-      
-      weeksContainer.appendChild(weekElement);
-    }
-  }
-
-  addDayEventListeners(dayElement, date, count, words) {
-    dayElement.addEventListener('mouseenter', (e) => {
-      this.showTooltip(e, date, count, words);
-    });
-    
-    dayElement.addEventListener('mouseleave', () => {
-      this.hideTooltip();
-    });
-    
-    dayElement.addEventListener('click', () => {
-      this.showWordList(date, words);
-    });
-  }
-
-  showTooltip(event, date, count, words) {
-    const tooltip = this.tooltip;
-    const dateStr = this.formatDateForDisplay(date);
-    
-    let content = `${dateStr}<br>`;
-    if (count === 0) {
-      content += '没有学习新单词';
-    } else {
-      content += `学习了 ${count} 个新单词`;
-    }
-    
-    tooltip.innerHTML = content;
-    tooltip.classList.add('show');
-    
-    // 定位tooltip
-    const rect = event.target.getBoundingClientRect();
-    tooltip.style.left = `${rect.left + rect.width / 2}px`;
-    tooltip.style.top = `${rect.top - 10}px`;
-    tooltip.style.transform = 'translate(-50%, -100%)';
+    const rect = event.currentTarget.getBoundingClientRect();
+    this.tooltip.style.left = `${rect.left + rect.width / 2}px`;
+    this.tooltip.style.top = `${rect.top - 10}px`;
+    this.tooltip.style.transform = 'translate(-50%, -100%)';
   }
 
   hideTooltip() {
@@ -198,24 +153,22 @@ class HeatmapPage {
 
   showWordList(date, words) {
     const wordList = document.getElementById('wordList');
-    const wordListTitle = document.getElementById('wordListTitle');
-    const wordsContainer = document.getElementById('wordsContainer');
-    
-    if (words && words.length > 0) {
-      wordListTitle.textContent = `${this.formatDateForDisplay(date)} 学习的单词`;
-      wordsContainer.innerHTML = '';
-      
-      words.forEach(word => {
-        const wordTag = document.createElement('span');
-        wordTag.className = 'word-tag';
-        wordTag.textContent = word;
-        wordsContainer.appendChild(wordTag);
-      });
-      
-      wordList.style.display = 'block';
-    } else {
+    if (!words.length) {
       wordList.style.display = 'none';
+      return;
     }
+
+    document.getElementById('wordListTitle').textContent =
+      `${this.formatDateForDisplay(date)} 收藏的单词`;
+    const container = document.getElementById('wordsContainer');
+    container.innerHTML = '';
+    words.forEach(word => {
+      const tag = document.createElement('span');
+      tag.className = 'word-tag';
+      tag.textContent = word;
+      container.appendChild(tag);
+    });
+    wordList.style.display = 'block';
   }
 
   getLevel(count) {
@@ -227,105 +180,85 @@ class HeatmapPage {
   }
 
   updateStats() {
-    // 计算统计数据
     const stats = this.calculateStats();
-    
-    // 更新UI
-    document.getElementById('totalWords').textContent = stats.totalWords;
+    document.getElementById('totalWords').textContent = this.totalWordCount;
     document.getElementById('thisWeek').textContent = stats.thisWeek;
-    document.getElementById('thisMonth').textContent = stats.thisMonth;
+    document.getElementById('thisMonth').textContent = stats.selectedMonth;
     document.getElementById('longestStreak').textContent = stats.longestStreak;
   }
 
   calculateStats() {
     const now = new Date();
-    const currentYear = now.getFullYear();
-    const currentMonth = now.getMonth();
-    
-    let totalWords = 0;
+    const startOfWeek = new Date(now);
+    const weekday = startOfWeek.getDay();
+    startOfWeek.setDate(startOfWeek.getDate() - (weekday === 0 ? 6 : weekday - 1));
+    startOfWeek.setHours(0, 0, 0, 0);
+
+    const selectedYear = this.currentMonth.getFullYear();
+    const selectedMonth = this.currentMonth.getMonth();
     let thisWeek = 0;
-    let thisMonth = 0;
+    let selectedMonthCount = 0;
+    const activeDates = [];
+
+    for (const [dateKey, dayStats] of Object.entries(this.dailyStats)) {
+      const date = this.parseDate(dateKey);
+      const count = Number(dayStats?.count || 0);
+      if (date >= startOfWeek && date <= now) thisWeek += count;
+      if (date.getFullYear() === selectedYear && date.getMonth() === selectedMonth) {
+        selectedMonthCount += count;
+      }
+      if (count > 0) activeDates.push(date);
+    }
+
+    activeDates.sort((a, b) => a - b);
     let longestStreak = 0;
     let currentStreak = 0;
-    
-    // 获取本周开始日期（周一）
-    const startOfWeek = new Date(now);
-    const dayOfWeek = startOfWeek.getDay();
-    const daysToSubtract = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
-    startOfWeek.setDate(startOfWeek.getDate() - daysToSubtract);
-    startOfWeek.setHours(0, 0, 0, 0);
-    
-    // 获取本月开始日期
-    const startOfMonth = new Date(currentYear, currentMonth, 1);
-    
-    // 按日期排序处理数据
-    const sortedDates = Object.keys(this.dailyStats).sort();
-    
-    for (const dateStr of sortedDates) {
-      const date = new Date(dateStr);
-      const stats = this.dailyStats[dateStr];
-      const count = stats.count || 0;
-      
-      // 总单词数
-      totalWords += count;
-      
-      // 本周新增
-      if (date >= startOfWeek && date <= now) {
-        thisWeek += count;
-      }
-      
-      // 本月新增
-      if (date >= startOfMonth && date <= now) {
-        thisMonth += count;
-      }
-      
-      // 计算连续天数
-      if (count > 0) {
-        currentStreak++;
-        longestStreak = Math.max(longestStreak, currentStreak);
-      } else {
-        currentStreak = 0;
-      }
+    let previous = null;
+    for (const date of activeDates) {
+      const daysApart = previous
+        ? Math.round((date - previous) / (24 * 60 * 60 * 1000))
+        : null;
+      currentStreak = daysApart === 1 ? currentStreak + 1 : 1;
+      longestStreak = Math.max(longestStreak, currentStreak);
+      previous = date;
     }
-    
+
     return {
-      totalWords,
       thisWeek,
-      thisMonth,
+      selectedMonth: selectedMonthCount,
       longestStreak
     };
   }
 
+  parseDate(value) {
+    const [year, month, day] = String(value).split('-').map(Number);
+    return new Date(year, month - 1, day);
+  }
+
   formatDate(date) {
-    return date.toISOString().split('T')[0];
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
   }
 
   formatDateForDisplay(date) {
-    const year = date.getFullYear();
-    const month = date.getMonth() + 1;
-    const day = date.getDate();
-    return `${year}年${month}月${day}日`;
+    return `${date.getFullYear()}年${date.getMonth() + 1}月${date.getDate()}日`;
   }
 
   hideLoading() {
     document.getElementById('loadingState').style.display = 'none';
+    document.getElementById('errorState').style.display = 'none';
     document.getElementById('heatmapContainer').style.display = 'block';
   }
 
   showError() {
     document.getElementById('loadingState').style.display = 'none';
+    document.getElementById('heatmapContainer').style.display = 'none';
     document.getElementById('errorState').style.display = 'block';
   }
 }
 
-// 页面加载完成后初始化
 document.addEventListener('DOMContentLoaded', () => {
   new HeatmapPage();
-});
-
-// 处理返回按钮
-document.addEventListener('click', (e) => {
-  if (e.target.classList.contains('back-btn')) {
-    window.close();
-  }
 });

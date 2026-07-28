@@ -123,13 +123,35 @@
         gap: 8px;
       }
       
-      .year-selector {
+      .month-controls {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .month-selector {
         padding: 8px 12px;
         border: 1px solid rgba(0,0,0,0.08);
         border-radius: 12px;
         background: rgba(255,255,255,0.9);
         font-size: 14px;
         cursor: pointer;
+      }
+
+      .month-nav {
+        width: 34px;
+        height: 34px;
+        border: 1px solid rgba(0,0,0,.08);
+        border-radius: 11px;
+        background: rgba(255,255,255,.9);
+        color: #667eea;
+        font-size: 20px;
+        cursor: pointer;
+      }
+
+      .month-nav:hover {
+        background: #fff;
+        transform: translateY(-1px);
       }
       
       .heatmap-container {
@@ -138,68 +160,63 @@
       }
       
       .heatmap {
-        display: inline-block;
-        min-width: 800px;
+        min-width: 560px;
       }
-      
-      .months {
-        display: flex;
+
+      .weekday-row,
+      .month-grid {
+        display: grid;
+        grid-template-columns: repeat(7, minmax(48px, 1fr));
+        gap: 8px;
+      }
+
+      .weekday-row {
         margin-bottom: 8px;
-        padding-left: 30px;
       }
-      
-      .month {
-        flex: 1;
+
+      .weekday {
         font-size: 12px;
         color: #666;
         text-align: center;
-        min-width: 60px;
-      }
-      
-      .heatmap-grid {
-        display: flex;
-        gap: 2px;
-      }
-      
-      .weekdays {
-        display: flex;
-        flex-direction: column;
-        gap: 2px;
-        margin-right: 8px;
-      }
-      
-      .weekday {
-        height: 12px;
-        font-size: 10px;
-        color: #666;
-        display: flex;
-        align-items: center;
-        width: 20px;
-      }
-      
-      .weeks {
-        display: flex;
-        gap: 2px;
-      }
-      
-      .week {
-        display: flex;
-        flex-direction: column;
-        gap: 2px;
+        font-weight: 600;
+        padding: 4px;
       }
       
       .day {
-        width: 12px;
-        height: 12px;
-        border-radius: 2px;
+        min-height: 58px;
+        border-radius: 12px;
         cursor: pointer;
         transition: all 0.2s ease;
         position: relative;
+        padding: 8px;
+        border: 1px solid rgba(0,0,0,.04);
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
       }
       
       .day:hover {
-        transform: scale(1.2);
-        border: 1px solid #333;
+        transform: translateY(-2px);
+        border-color: rgba(51,51,51,.24);
+        box-shadow: 0 7px 16px rgba(0,0,0,.1);
+      }
+
+      .day.empty {
+        visibility: hidden;
+        pointer-events: none;
+      }
+
+      .day-number {
+        font-size: 12px;
+        font-weight: 700;
+        color: #344054;
+      }
+
+      .day-count {
+        align-self: flex-end;
+        font-size: 10px;
+        color: rgba(24,39,28,.7);
+        font-weight: 700;
       }
       
       /* 热力图颜色等级 */
@@ -208,6 +225,15 @@
       .day.level-2 { background-color: #7bc96f; }
       .day.level-3 { background-color: #239a3b; }
       .day.level-4 { background-color: #196127; }
+      .day.level-3 .day-number,
+      .day.level-3 .day-count,
+      .day.level-4 .day-number,
+      .day.level-4 .day-count { color: #fff; }
+      .legend-color.level-0 { background-color: #ebedf0; }
+      .legend-color.level-1 { background-color: #c6e48b; }
+      .legend-color.level-2 { background-color: #7bc96f; }
+      .legend-color.level-3 { background-color: #239a3b; }
+      .legend-color.level-4 { background-color: #196127; }
       
       .legend {
         display: flex;
@@ -232,7 +258,7 @@
       }
       
       .tooltip {
-        position: absolute;
+        position: fixed;
         background: rgba(0, 0, 0, 0.8);
         color: white;
         padding: 8px 12px;
@@ -298,7 +324,7 @@
     <div class="container">
       <header>
         <h1>📊 学习热力图</h1>
-        <button class="back-btn" onclick="window.close()">返回</button>
+        <button class="back-btn" id="backBtn" type="button">返回</button>
       </header>
       <div class="content">
         <div class="stats-overview">
@@ -312,7 +338,7 @@
           </div>
           <div class="stat-card">
             <div class="stat-number" id="thisMonth">0</div>
-            <div class="stat-label">本月新增</div>
+            <div class="stat-label">所选月新增</div>
           </div>
           <div class="stat-card">
             <div class="stat-number" id="longestStreak">0</div>
@@ -323,9 +349,11 @@
         <div class="heatmap-section">
           <div class="heatmap-header">
             <h3 class="heatmap-title">🔥 学习活跃度</h3>
-            <select class="year-selector" id="yearSelector">
-              <option value="2024">2024年</option>
-            </select>
+            <div class="month-controls">
+              <button class="month-nav" id="previousMonth" type="button" aria-label="上个月">‹</button>
+              <input class="month-selector" id="monthSelector" type="month" />
+              <button class="month-nav" id="nextMonth" type="button" aria-label="下个月">›</button>
+            </div>
           </div>
           
           <div id="loadingState" class="loading">
@@ -338,22 +366,17 @@
           
           <div id="heatmapContainer" class="heatmap-container" style="display: none;">
             <div class="heatmap">
-              <div class="months" id="monthsRow">
-                <!-- 月份标签将由JavaScript生成 -->
+              <div class="weekday-row">
+                <div class="weekday">一</div>
+                <div class="weekday">二</div>
+                <div class="weekday">三</div>
+                <div class="weekday">四</div>
+                <div class="weekday">五</div>
+                <div class="weekday">六</div>
+                <div class="weekday">日</div>
               </div>
-              <div class="heatmap-grid">
-                <div class="weekdays">
-                  <div class="weekday"></div>
-                  <div class="weekday">一</div>
-                  <div class="weekday"></div>
-                  <div class="weekday">三</div>
-                  <div class="weekday"></div>
-                  <div class="weekday">五</div>
-                  <div class="weekday"></div>
-                </div>
-                <div class="weeks" id="weeksContainer">
-                  <!-- 热力图网格将由JavaScript生成 -->
-                </div>
+              <div class="month-grid" id="monthGrid">
+                <!-- 当月日期将由 JavaScript 生成 -->
               </div>
             </div>
             

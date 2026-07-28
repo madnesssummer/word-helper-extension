@@ -61,10 +61,18 @@ section { padding: 10px 12px; }
 }
 #wordList li:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0,0,0,0.08); }
 
+.word-content { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 4px; margin-right: 10px; }
 .word { font-weight: 700; }
-.translation { color: #7f8c8d; font-size: 12px; }
+.word-details { display: flex; align-items: flex-start; gap: 6px; min-width: 0; }
+.part-of-speech {
+  flex-shrink: 0; padding: 2px 6px; border-radius: 7px;
+  color: #5f63bd; background: rgba(127,127,213,0.12);
+  font-size: 10px; font-weight: 700;
+}
+.meaning { color: #7f8c8d; font-size: 12px; line-height: 1.45; overflow-wrap: anywhere; }
 
 button.small {
+  flex-shrink: 0;
   padding: 6px 10px; border: none;
   background: linear-gradient(135deg, #43e97b, #38f9d7);
   color: #fff; border-radius: 12px; cursor: pointer;
@@ -96,6 +104,15 @@ button.small.secondary:hover { box-shadow: 0 3px 8px rgba(247,151,30,0.4); }
 }
 .heatmap-button:hover { transform: translateY(-2px); box-shadow: 0 6px 18px rgba(255,154,158,0.4); }
 .heatmap-button:active { transform: scale(0.97); }
+.weekly-summary-button {
+  width: 100%; padding: 12px; border: none;
+  background: linear-gradient(135deg, #ff6a88, #8f68e8 55%, #4facfe);
+  color: #fff; border-radius: 16px; cursor: pointer;
+  font-size: 14px; font-weight: 650; margin: 4px 0;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+.weekly-summary-button:hover { transform: translateY(-2px); box-shadow: 0 6px 18px rgba(143,104,232,.38); }
+.weekly-summary-button:active { transform: scale(0.97); }
 .io-section { display: flex; flex-wrap: wrap; gap: 8px; padding: 6px 12px; }
 .export-button, .import-button { flex: 1; padding: 10px; border: none; border-radius: 14px; cursor: pointer; font-size: 13px; font-weight: 600; color: #fff; transition: all 0.25s ease; }
 .export-button { background: linear-gradient(135deg, #56ab2f, #a8e6cf); }

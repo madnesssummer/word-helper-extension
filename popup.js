@@ -4,6 +4,7 @@ const searchBtn = document.getElementById('searchBtn');
 const openOptions = document.getElementById('openOptions');
 const reviewBtn = document.getElementById('reviewBtn');
 const heatmapBtn = document.getElementById('heatmapBtn');
+const weeklySummaryBtn = document.getElementById('weeklySummaryBtn');
 const immersiveBtn = document.getElementById('immersiveBtn');
 const exportBtn = document.getElementById('exportBtn');
 const importBtn = document.getElementById('importBtn');
@@ -58,6 +59,10 @@ reviewBtn.addEventListener('click', () => {
 // 热力图按钮点击事件
 heatmapBtn.addEventListener('click', () => {
   chrome.tabs.create({ url: chrome.runtime.getURL('heatmap.html') });
+});
+
+weeklySummaryBtn.addEventListener('click', () => {
+  chrome.tabs.create({ url: chrome.runtime.getURL('weekly-summary.html') });
 });
 
 // ── 导出单词本 ──
@@ -138,18 +143,24 @@ async function refreshList() {
   const { ok, data } = await chrome.runtime.sendMessage({ type: 'GET_WORD_BOOK' });
   if (!ok) return;
   const items = Object.values(data || {});
-  items.sort((a, b) => (b.addedAt || 0) - (a.addedAt || 0));
+  items.sort((a, b) => a.word.localeCompare(b.word, 'en'));
   listEl.innerHTML = '';
   for (const [index, item] of items.entries()) {
     const li = document.createElement('li');
     // 交错入场动画
     li.style.animationDelay = `${index * 35}ms`;
+    const partOfSpeech = item.partOfSpeech
+      ? `<span class="part-of-speech">${escapeHtml(item.partOfSpeech)}</span>`
+      : '';
     li.innerHTML = `
-      <span class="word">${escapeHtml(item.word)}</span>
-      <span class="translation">${escapeHtml((item.translation?.explains || []).join('; '))}</span>
-      <span>
-        <button class="small" data-word="${escapeAttr(item.word)}">复习</button>
+      <span class="word-content">
+        <span class="word">${escapeHtml(item.word)}</span>
+        <span class="word-details">
+          ${partOfSpeech}
+          <span class="meaning">${escapeHtml(item.meaning || '暂无释义')}</span>
+        </span>
       </span>
+      <button class="small" data-word="${escapeAttr(item.word)}">复习</button>
     `;
     li.querySelector('button.small').addEventListener('click', () => review(item.word));
     listEl.appendChild(li);
@@ -162,19 +173,10 @@ function escapeHtml(str) {
 function escapeAttr(str) { return escapeHtml(str); }
 
 async function review(word) {
-  const { ok, data } = await chrome.runtime.sendMessage({ type: 'GET_WORD_BOOK' });
-  if (!ok) return;
-  const book = data || {};
-  const item = book[word];
-  if (!item) return;
-  item.reviewedTimes = (item.reviewedTimes || 0) + 1;
-  item.lastReviewedAt = Date.now();
-  // 交由后台统一计算 nextReviewAt 更好；简化起见在前端做一次
-  const intervals = [1, 2, 4, 7, 15];
-  const idx = Math.min(item.reviewedTimes, intervals.length - 1);
-  item.nextReviewAt = Date.now() + intervals[idx] * 24 * 60 * 60 * 1000;
-  await chrome.storage.local.set({ word_book: book });
-  await refreshList();
+  await chrome.runtime.sendMessage({
+    type: 'UPDATE_REVIEW_STATUS',
+    payload: { word, isCorrect: true }
+  });
 }
 
 refreshList();

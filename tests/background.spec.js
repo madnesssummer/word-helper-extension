@@ -1,6 +1,5 @@
 /** @jest-environment jsdom */
 
-// 伪造 chrome API 基础结构
 global.chrome = {
   storage: {
     local: {
@@ -8,11 +7,15 @@ global.chrome = {
       async get(key) {
         if (typeof key === 'string') return { [key]: this._data[key] };
         if (Array.isArray(key)) {
-          const res = {}; key.forEach(k => res[k] = this._data[k]); return res;
+          const result = {};
+          key.forEach((item) => { result[item] = this._data[item]; });
+          return result;
         }
         return { ...this._data };
       },
-      async set(obj) { this._data = { ...this._data, ...obj }; },
+      async set(value) {
+        this._data = { ...this._data, ...value };
+      }
     }
   },
   runtime: {
@@ -25,16 +28,97 @@ global.chrome = {
   action: { setBadgeText: jest.fn(), setBadgeBackgroundColor: jest.fn() }
 };
 
-describe('background basic', () => {
-  test('storage defaults', async () => {
-    // 加载脚本
-    require('../background.js');
-    // 手动触发 onInstalled 回调
-    const cb = chrome.runtime.onInstalled.addListener.mock.calls[0][0];
-    await cb();
-    const { word_book, settings } = await chrome.storage.local.get(['word_book', 'settings']);
-    expect(word_book).toBeDefined();
-    expect(settings).toBeDefined();
-  });
+require('../background.js');
+
+const installExtension = async () => {
+  const callback = chrome.runtime.onInstalled.addListener.mock.calls[0][0];
+  await callback();
+};
+
+const sendMessage = (type, payload = {}) => new Promise((resolve) => {
+  const listener = chrome.runtime.onMessage.addListener.mock.calls[0][0];
+  listener({ type, payload }, {}, resolve);
 });
 
+describe('background word book storage', () => {
+  beforeEach(() => {
+    chrome.storage.local._data = {};
+  });
+
+  test('initializes storage defaults', async () => {
+    await installExtension();
+
+    const { word_book, review_progress, activity_stats, settings } =
+      await chrome.storage.local.get(['word_book', 'review_progress', 'activity_stats', 'settings']);
+    expect(word_book).toEqual({});
+    expect(review_progress).toEqual({});
+    expect(activity_stats).toEqual({});
+    expect(settings).toBeDefined();
+  });
+
+  test('stores only the word, meaning and part of speech', async () => {
+    await installExtension();
+
+    const response = await sendMessage('ADD_TO_WORD_BOOK', {
+      word: 'Wisdom',
+      entry: {
+        meaning: '普遍看法；传统观念',
+        partOfSpeech: 'noun',
+        explanation: '不应写入单词本',
+        alternatives: ['主流观点']
+      }
+    });
+
+    expect(response.ok).toBe(true);
+    expect(chrome.storage.local._data.word_book).toEqual({
+      wisdom: {
+        word: 'Wisdom',
+        meaning: '普遍看法；传统观念',
+        partOfSpeech: 'noun'
+      }
+    });
+    expect(chrome.storage.local._data.review_progress.wisdom).toBeDefined();
+  });
+
+  test('migrates existing entries and removes legacy translation details', async () => {
+    chrome.storage.local._data.word_book = {
+      Wisdom: {
+        word: 'Wisdom',
+        definition: '普遍看法；传统观念',
+        translation: {
+          explains: [
+            '普遍看法；传统观念',
+            '这里是较长的上下文解释',
+            '原句翻译：传统观念认为……'
+          ],
+          deepseek: {
+            partOfSpeech: 'noun',
+            alternatives: ['主流观点']
+          }
+        },
+        reviewStage: 3,
+        correctCount: 2,
+        wrongCount: 1,
+        nextReviewAt: 12345,
+        createdAt: 6789
+      }
+    };
+
+    await installExtension();
+
+    expect(chrome.storage.local._data.word_book).toEqual({
+      wisdom: {
+        word: 'Wisdom',
+        meaning: '普遍看法；传统观念',
+        partOfSpeech: 'noun'
+      }
+    });
+    expect(chrome.storage.local._data.review_progress.wisdom).toEqual({
+      createdAt: 6789,
+      nextReviewAt: 12345,
+      reviewStage: 3,
+      correctCount: 2,
+      wrongCount: 1
+    });
+  });
+});

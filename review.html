@@ -109,12 +109,14 @@
             line-height: 1.6;
             margin-bottom: 30px;
             opacity: 0;
+            visibility: hidden;
             transform: translateY(20px);
-            transition: all 0.3s ease;
+            transition: opacity 0.3s ease, transform 0.3s ease;
         }
 
         .definition.show {
             opacity: 1;
+            visibility: visible;
             transform: translateY(0);
         }
 
