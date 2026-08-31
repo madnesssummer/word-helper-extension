@@ -124,6 +124,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         sendResponse({ ok: true, data });
         return;
       }
+      case 'SPEAK_TEXT': {
+        const data = await speakText(message.payload?.text);
+        sendResponse({ ok: true, data });
+        return;
+      }
       case 'ADD_TO_WORD_BOOK': {
         const data = await addToWordBook(
           message.payload.word,
@@ -225,6 +230,28 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   // 使用异步
   return true;
 });
+
+function speakText(text) {
+  const value = String(text || '').trim();
+  if (!value) throw new Error('TTS_TEXT_REQUIRED');
+  if (!chrome.tts?.speak) throw new Error('TTS_UNAVAILABLE');
+
+  chrome.tts.stop?.();
+  return new Promise((resolve, reject) => {
+    chrome.tts.speak(value, {
+      lang: 'en-US',
+      rate: 0.85,
+      enqueue: false
+    }, () => {
+      const error = chrome.runtime.lastError;
+      if (error) {
+        reject(new Error(error.message || 'TTS_PLAYBACK_FAILED'));
+        return;
+      }
+      resolve({ text: value });
+    });
+  });
+}
 
 // ===================== 腾讯云机器翻译（TMT）集成 =====================
 // 通过本地配置文件 config.local.json 读取密钥并完成签名请求

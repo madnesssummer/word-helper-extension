@@ -5,14 +5,18 @@
 // 4) 根据单词本对页面高亮（简单基于文本节点替换，避免重排）
 // 5) 沉浸式段落翻译（手动开启，DeepL，跳过单词本中的单词）
 
-// ── TTS 朗读（英文） ──
-function speak(word) {
-  if (!window.speechSynthesis) return;
-  window.speechSynthesis.cancel();
-  const utter = new SpeechSynthesisUtterance(word);
-  utter.lang = 'en-US';
-  utter.rate = 0.85;
-  speechSynthesis.speak(utter);
+// ── 通过扩展后台调用 chrome.tts 朗读英文 ──
+async function speak(text) {
+  const value = String(text || '').trim();
+  if (!value) return;
+
+  const response = await chrome.runtime.sendMessage({
+    type: 'SPEAK_TEXT',
+    payload: { text: value }
+  });
+  if (!response?.ok) {
+    throw new Error(response?.error || 'TTS_PLAYBACK_FAILED');
+  }
 }
 
 let cardRoot = null;
@@ -247,6 +251,7 @@ function buildTermResultHtml(selectedText, result, queryStats, inWordBook) {
   return `
     <div class="wh-title">
       ${escapeHtml(selectedText)}
+      ${buildSpeakButton('wh-deepseek-speak')}
       <span class="wh-type-tag">词/短语</span>
       ${buildHeartButton('wh-deepseek-heart', inWordBook)}
     </div>
@@ -258,6 +263,7 @@ function buildTermResultHtml(selectedText, result, queryStats, inWordBook) {
 }
 
 function bindDeepSeekTermActions(word, result, inWordBook) {
+  bindSpeakButton('wh-deepseek-speak', word);
   bindWordBookHeart(
     'wh-deepseek-heart',
     word,
@@ -346,7 +352,7 @@ function showCard(x, y, word, translation, queryStats, inWordBook) {
     <div class="wh-title">
       ${escapeHtml(word)}${typeTag}
       <span class="wh-title-actions">
-        <button id="wh-speak" class="wh-speak-btn" title="朗读" aria-label="朗读">🔊</button>
+        ${buildSpeakButton('wh-speak')}
         ${buildHeartButton('wh-heart', inWordBook)}
       </span>
     </div>
@@ -357,15 +363,43 @@ function showCard(x, y, word, translation, queryStats, inWordBook) {
   `;
   document.body.appendChild(cardRoot);
 
-  document.getElementById('wh-speak')?.addEventListener('click', (e) => {
-    e.stopPropagation();
-    speak(word);
-  });
+  bindSpeakButton('wh-speak', word);
 
   bindWordBookHeart('wh-heart', word, {
     meaning: translation?.meaning || translation?.explains?.[0] || '暂无释义',
     partOfSpeech: translation?.partOfSpeech || ''
   }, inWordBook);
+}
+
+function buildSpeakButton(id) {
+  return `<button
+    id="${id}"
+    class="wh-speak-btn"
+    type="button"
+    aria-label="播放发音"
+    title="播放发音"
+  ><svg aria-hidden="true" focusable="false" viewBox="0 0 24 24"><path d="M3 9v6h4l5 4V5L7 9H3zm12.5 3a3.5 3.5 0 0 0-2-3.16v6.32a3.5 3.5 0 0 0 2-3.16zm-2-7.53v2.06a6 6 0 0 1 0 10.94v2.06a8 8 0 0 0 0-15.06z"/></svg></button>`;
+}
+
+function bindSpeakButton(buttonId, text) {
+  document.getElementById(buttonId)?.addEventListener('click', async (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+
+    const button = event.currentTarget;
+    if (button.disabled) return;
+    button.disabled = true;
+
+    try {
+      await speak(text);
+    } catch (error) {
+      console.error('播放单词发音失败:', error);
+      button.classList.add('is-error');
+      window.setTimeout(() => button.classList.remove('is-error'), 700);
+    } finally {
+      button.disabled = false;
+    }
+  });
 }
 
 function buildHeartButton(id, inWordBook) {

@@ -158,6 +158,33 @@
 .word-helper-card .wh-title > .wh-heart-btn {
   margin-left: auto;
 }
+.word-helper-card .wh-speak-btn {
+  display: inline-grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  min-height: 32px;
+  flex: 0 0 32px;
+  padding: 0;
+  border-radius: 50%;
+  color: var(--wh-text-primary);
+  background: var(--wh-glass-bg);
+  border-color: var(--wh-glass-border);
+  box-shadow: 0 6px 16px rgba(15,23,42,.15), inset 0 1px 0 rgba(255,255,255,.28);
+  backdrop-filter: blur(16px) saturate(170%);
+  -webkit-backdrop-filter: blur(16px) saturate(170%);
+}
+.word-helper-card .wh-speak-btn:hover {
+  background: var(--wh-secondary-button-hover);
+}
+.word-helper-card .wh-speak-btn svg {
+  width: 18px;
+  height: 18px;
+  fill: currentColor;
+}
+.word-helper-card .wh-speak-btn.is-error {
+  animation: wh-heart-error 360ms ease;
+}
 .word-helper-card .wh-heart-btn {
   position: relative;
   width: 38px;
@@ -235,28 +262,6 @@ mark.word-helper-highlight { background: rgba(255, 234, 167, 0.9); padding: 0 3p
 .word-helper-trigger:active {
   transform: scale(0.96);
 }
-
-/* 朗读按钮 */
-.wh-speak-btn {
-  min-height: 0 !important;
-  background: rgba(255,255,255,0.2) !important;
-  border: 1px solid rgba(255,255,255,0.4) !important;
-  border-radius: 50% !important;
-  width: 32px !important;
-  height: 32px !important;
-  padding: 0 !important;
-  display: inline-flex !important;
-  align-items: center;
-  justify-content: center;
-  font-size: 14px;
-  cursor: pointer;
-  flex-shrink: 0;
-  margin-left: 0;
-  box-shadow: 0 6px 16px rgba(15,23,42,.15), inset 0 1px 0 rgba(255,255,255,.28) !important;
-  backdrop-filter: blur(16px) saturate(170%);
-  -webkit-backdrop-filter: blur(16px) saturate(170%);
-}
-.wh-speak-btn:hover { background: rgba(255,255,255,0.32) !important; }
 
 /* 沉浸式翻译块 */
 .wh-immersive-block {

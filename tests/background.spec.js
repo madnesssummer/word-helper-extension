@@ -24,6 +24,10 @@ global.chrome = {
     sendMessage: jest.fn(),
     openOptionsPage: jest.fn()
   },
+  tts: {
+    stop: jest.fn(),
+    speak: jest.fn((text, options, callback) => callback())
+  },
   alarms: { create: jest.fn(), onAlarm: { addListener: jest.fn() } },
   action: { setBadgeText: jest.fn(), setBadgeBackgroundColor: jest.fn() }
 };
@@ -43,6 +47,20 @@ const sendMessage = (type, payload = {}) => new Promise((resolve) => {
 describe('background word book storage', () => {
   beforeEach(() => {
     chrome.storage.local._data = {};
+    chrome.tts.stop.mockClear();
+    chrome.tts.speak.mockClear();
+  });
+
+  test('speaks English text through chrome.tts', async () => {
+    const response = await sendMessage('SPEAK_TEXT', { text: ' wisdom ' });
+
+    expect(response).toEqual({ ok: true, data: { text: 'wisdom' } });
+    expect(chrome.tts.stop).toHaveBeenCalledTimes(1);
+    expect(chrome.tts.speak).toHaveBeenCalledWith(
+      'wisdom',
+      { lang: 'en-US', rate: 0.85, enqueue: false },
+      expect.any(Function)
+    );
   });
 
   test('initializes storage defaults', async () => {
