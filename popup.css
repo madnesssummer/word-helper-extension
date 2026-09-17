@@ -138,6 +138,7 @@ button.small.secondary:hover { box-shadow: 0 3px 8px rgba(247,151,30,0.4); }
 }
 .immersive-button:hover { transform: translateY(-2px); box-shadow: 0 6px 18px rgba(33,147,176,0.4); }
 .immersive-button:active { transform: scale(0.97); }
+.immersive-button:disabled { opacity: 0.55; cursor: not-allowed; transform: none; box-shadow: none; }
 .immersive-button--active {
   background: linear-gradient(135deg, #f7971e, #ffd200);
   color: #333;

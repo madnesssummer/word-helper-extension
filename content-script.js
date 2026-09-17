@@ -534,12 +534,15 @@ function escapeRegex(s) {
 highlightWordsOnPage();
 
 // ── 沉浸式翻译引擎 ──
-const PARA_SELECTORS = 'p, h1, h2, h3, h4, h5, h6, li, blockquote';
+const STRUCTURAL_TEXT_SELECTORS = 'p, h1, h2, h3, h4, h5, h6, li, blockquote';
+const PARA_SELECTORS = `${STRUCTURAL_TEXT_SELECTORS}, span`;
 const IMMERSIVE_ATTR = 'data-wh-translated';
 const IMMERSIVE_CLASS = 'wh-immersive-block';
 const MAX_CONCURRENT = 3;
 
 let immersiveEnabled = false;
+let immersivePageKey = '';
+let immersiveSessionId = 0;
 let wordBookSet = new Set();   // 单词本中的词（小写），跳过翻译
 let translateQueue = [];
 let activeRequests = 0;
@@ -557,7 +560,14 @@ function shouldSkip(el) {
   // 本身是翻译块
   if (el.classList.contains(IMMERSIVE_CLASS)) return true;
   // 在代码/脚本/导航等区域内
-  if (el.closest('nav, code, pre, script, style, noscript, [contenteditable], .word-helper-card')) return true;
+  if (el.closest('nav, button, input, textarea, select, option, code, pre, script, style, noscript, [role="button"], [aria-hidden="true"], [contenteditable], .word-helper-card')) return true;
+  // 一些现代文档站用块级 span 渲染正文段落；只接收独立的块级 span，
+  // 排除标题、列表和普通段落内部的内联 span，避免父子节点重复翻译。
+  if (el.tagName === 'SPAN') {
+    if (el.parentElement?.closest(STRUCTURAL_TEXT_SELECTORS)) return true;
+    const display = window.getComputedStyle(el).display;
+    if (display !== 'block' && display !== 'flow-root') return true;
+  }
   const text = el.textContent.trim();
   // 太短
   if (!text || text.length < 15) return true;
@@ -577,22 +587,22 @@ function isMostlyEnglishText(text) {
 }
 
 function enqueue(el) {
-  if (shouldSkip(el) || translateQueue.includes(el)) return;
+  if (shouldSkip(el) || translateQueue.some(item => item.el === el)) return;
   el.setAttribute(IMMERSIVE_ATTR, 'pending');
-  translateQueue.push(el);
+  translateQueue.push({ el, sessionId: immersiveSessionId });
   drain();
 }
 
 function drain() {
   while (activeRequests < MAX_CONCURRENT && translateQueue.length > 0) {
-    const el = translateQueue.shift();
-    if (!el.isConnected || el.getAttribute(IMMERSIVE_ATTR) !== 'pending') continue;
+    const { el, sessionId } = translateQueue.shift();
+    if (!immersiveEnabled || sessionId !== immersiveSessionId || !el.isConnected || el.getAttribute(IMMERSIVE_ATTR) !== 'pending') continue;
     activeRequests++;
-    translateEl(el).finally(() => { activeRequests--; drain(); });
+    translateEl(el, sessionId).finally(() => { activeRequests--; drain(); });
   }
 }
 
-async function translateEl(el) {
+async function translateEl(el, sessionId) {
   const text = el.textContent.trim();
   if (!text || text.length < 15) { el.removeAttribute(IMMERSIVE_ATTR); return; }
 
@@ -615,6 +625,7 @@ async function translateEl(el) {
       }
     });
     loading.remove();
+    if (!immersiveEnabled || sessionId !== immersiveSessionId || getImmersivePageKey() !== immersivePageKey) return;
     if (ok && data?.translation) {
       el.setAttribute(IMMERSIVE_ATTR, 'done');
       const block = document.createElement('div');
@@ -626,12 +637,19 @@ async function translateEl(el) {
     }
   } catch (_) {
     loading.remove();
-    el.removeAttribute(IMMERSIVE_ATTR);
+    if (immersiveEnabled && sessionId === immersiveSessionId) {
+      el.removeAttribute(IMMERSIVE_ATTR);
+    }
   }
 }
 
 function startImmersive() {
+  const pageKey = getImmersivePageKey();
+  if (immersiveEnabled && immersivePageKey === pageKey) return;
+  if (immersiveEnabled) stopImmersive();
   immersiveEnabled = true;
+  immersivePageKey = pageKey;
+  immersiveSessionId++;
 
   // 视口内优先翻译，向下预加载 300px
   iObserver = new IntersectionObserver((entries) => {
@@ -649,6 +667,10 @@ function startImmersive() {
 
   // 监听动态新增段落（SPA 等）
   mObserver = new MutationObserver((mutations) => {
+    if (getImmersivePageKey() !== immersivePageKey) {
+      stopImmersive();
+      return;
+    }
     for (const m of mutations) {
       for (const node of m.addedNodes) {
         if (node.nodeType !== 1) continue;
@@ -662,6 +684,8 @@ function startImmersive() {
 
 function stopImmersive() {
   immersiveEnabled = false;
+  immersivePageKey = '';
+  immersiveSessionId++;
   translateQueue = [];
   iObserver?.disconnect(); iObserver = null;
   mObserver?.disconnect(); mObserver = null;
@@ -669,25 +693,40 @@ function stopImmersive() {
   document.querySelectorAll(`[${IMMERSIVE_ATTR}]`).forEach(el => el.removeAttribute(IMMERSIVE_ATTR));
 }
 
-// 监听 popup 发来的开关指令
-chrome.runtime.onMessage.addListener((message) => {
-  if (message.type === 'TOGGLE_IMMERSIVE') {
-    if (message.payload.enabled) {
-      refreshWordBookSet().then(startImmersive);
-    } else {
-      stopImmersive();
-    }
-  }
+function getImmersivePageKey() {
+  return `${location.origin}${location.pathname}${location.search}`;
+}
+
+window.addEventListener('popstate', () => {
+  if (immersiveEnabled && getImmersivePageKey() !== immersivePageKey) stopImmersive();
 });
 
-// 页面加载时检查是否已开启沉浸翻译
-(async () => {
-  const { ok, data } = await chrome.runtime.sendMessage({ type: 'GET_SETTINGS' });
-  if (ok && data?.immersiveTranslation) {
-    await refreshWordBookSet();
-    startImmersive();
+// 监听 popup 发来的开关指令
+chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message.type === 'GET_IMMERSIVE_STATE') {
+    if (immersiveEnabled && getImmersivePageKey() !== immersivePageKey) stopImmersive();
+    sendResponse({ ok: true, data: { enabled: immersiveEnabled } });
+    return;
   }
-})();
+
+  if (message.type !== 'TOGGLE_IMMERSIVE') return;
+
+  if (!message.payload?.enabled) {
+    stopImmersive();
+    sendResponse({ ok: true, data: { enabled: false } });
+    return;
+  }
+
+  refreshWordBookSet()
+    .then(() => {
+      startImmersive();
+      sendResponse({ ok: true, data: { enabled: true } });
+    })
+    .catch((error) => {
+      sendResponse({ ok: false, error: error?.message || 'IMMERSIVE_START_FAILED' });
+    });
+  return true;
+});
 
 // 卡片渐变主题：经典渐变、混合渐变和高饱和彩虹渐变
 const CARD_THEMES = [

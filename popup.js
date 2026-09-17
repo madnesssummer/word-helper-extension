@@ -13,37 +13,35 @@ const ioMsg = document.getElementById('ioMsg');
 
 // ── 沉浸翻译开关 ──
 let immersiveEnabled = false;
+let immersiveTabId = null;
 
 function updateImmersiveBtn() {
   if (immersiveEnabled) {
-    immersiveBtn.textContent = '关闭全文翻译';
+    immersiveBtn.textContent = '关闭当前页全文翻译';
     immersiveBtn.classList.add('immersive-button--active');
   } else {
-    immersiveBtn.textContent = '开启全文翻译';
+    immersiveBtn.textContent = '开启当前页全文翻译';
     immersiveBtn.classList.remove('immersive-button--active');
   }
 }
 
 immersiveBtn.addEventListener('click', async () => {
-  immersiveEnabled = !immersiveEnabled;
-  updateImmersiveBtn();
+  if (!immersiveTabId) return;
 
-  await chrome.runtime.sendMessage({
-    type: 'UPDATE_SETTINGS',
-    payload: { immersiveTranslation: immersiveEnabled }
-  });
-
-  // 通知当前标签页的 content script
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (tab?.id) {
-    try {
-      await chrome.tabs.sendMessage(tab.id, {
-        type: 'TOGGLE_IMMERSIVE',
-        payload: { enabled: immersiveEnabled }
-      });
-    } catch (_) {
-      // 部分页面（如 chrome:// ）无 content script，忽略
-    }
+  const nextEnabled = !immersiveEnabled;
+  immersiveBtn.disabled = true;
+  try {
+    const response = await chrome.tabs.sendMessage(immersiveTabId, {
+      type: 'TOGGLE_IMMERSIVE',
+      payload: { enabled: nextEnabled }
+    });
+    if (!response?.ok) throw new Error(response?.error || 'IMMERSIVE_TOGGLE_FAILED');
+    immersiveEnabled = !!response.data?.enabled;
+  } catch (_) {
+    immersiveEnabled = false;
+  } finally {
+    updateImmersiveBtn();
+    immersiveBtn.disabled = false;
   }
 });
 
@@ -181,13 +179,26 @@ async function review(word) {
 
 refreshList();
 
-// 加载沉浸翻译初始状态
-(async () => {
-  const { ok, data } = await chrome.runtime.sendMessage({ type: 'GET_SETTINGS' });
-  if (ok) {
-    immersiveEnabled = data?.immersiveTranslation || false;
-    updateImmersiveBtn();
+// 从当前标签页读取状态：切换标签页或打开新页面后默认关闭。
+(async function loadImmersiveStateForCurrentTab() {
+  immersiveBtn.disabled = true;
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  immersiveTabId = tab?.id || null;
+
+  if (immersiveTabId) {
+    try {
+      const response = await chrome.tabs.sendMessage(immersiveTabId, {
+        type: 'GET_IMMERSIVE_STATE'
+      });
+      immersiveEnabled = !!(response?.ok && response.data?.enabled);
+    } catch (_) {
+      immersiveEnabled = false;
+      immersiveTabId = null;
+    }
   }
+
+  updateImmersiveBtn();
+  immersiveBtn.disabled = !immersiveTabId;
 })();
 
 // 可选：弹窗头部渐变在打开时随机变化
