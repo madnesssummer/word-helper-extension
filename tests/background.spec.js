@@ -241,4 +241,58 @@ describe('Qwen translation and weekly review', () => {
       .toEqual({ ok: false, error: 'QWEN_REQUEST_FAILED:HTTP_401' });
   });
 
+  test('matches batch translations by id, not response order', async () => {
+    mockContent(JSON.stringify({ translations: [
+      { id: 'second', translation: '第二段' }, { id: 'first', translation: '第一段' }
+    ] }));
+    expect(await sendMessage('TRANSLATE_PARAGRAPHS', {
+      paragraphs: [{ id: 'first', text: 'First paragraph.' }, { id: 'second', text: 'Second paragraph.' }]
+    })).toEqual({ ok: true, data: { translations: [
+      { id: 'first', translation: '第一段' }, { id: 'second', translation: '第二段' }
+    ] } });
+    const body = requestBody();
+    expect(body.response_format).toEqual({ type: 'json_object' });
+    expect(JSON.parse(body.messages[1].content).paragraphs).toHaveLength(2);
+  });
+
+  test('keeps valid batch translations and flags duplicate, missing or invalid ids', async () => {
+    mockContent(JSON.stringify({ translations: [
+      { id: 'good', translation: '正确' }, { id: 'duplicate', translation: '一' },
+      { id: 'duplicate', translation: '二' }, { id: 'invalid', translation: null },
+      { id: 'unknown', translation: '忽略' }
+    ] }));
+    const response = await sendMessage('TRANSLATE_PARAGRAPHS', {
+      paragraphs: ['good', 'duplicate', 'invalid', 'missing'].map(id => ({ id, text: id }))
+    });
+    expect(response.data.translations).toEqual([
+      { id: 'good', translation: '正确' },
+      ...['duplicate', 'invalid', 'missing'].map(id => ({ id, error: 'QWEN_INVALID_TRANSLATION' }))
+    ]);
+  });
+
+  test.each([
+    [],
+    Array.from({ length: 7 }, (_, id) => ({ id: String(id), text: 'Paragraph' })),
+    [{ id: 'same', text: 'One' }, { id: 'same', text: 'Two' }],
+    [{ id: 'empty', text: ' ' }],
+    [{ id: 'oversize', text: 'a'.repeat(100001) }]
+  ])('rejects an invalid paragraph batch %# before fetching', async (...items) => {
+    expect(await sendMessage('TRANSLATE_PARAGRAPHS', { paragraphs: items }))
+      .toEqual({ ok: false, error: 'INVALID_PARAGRAPH_BATCH' });
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  test('aborts a stalled request after 25 seconds', async () => {
+    jest.useFakeTimers();
+    global.fetch.mockImplementation((_url, { signal }) => new Promise((_resolve, reject) => {
+      signal.addEventListener('abort', () => reject(new Error('Aborted')));
+    }));
+    try {
+      const pending = sendMessage('TRANSLATE_PARAGRAPHS', { paragraphs: [{ id: '1', text: 'Hello' }] });
+      await jest.advanceTimersByTimeAsync(25000);
+      expect(await pending).toEqual({ ok: false, error: 'QWEN_REQUEST_FAILED:TIMEOUT' });
+    } finally {
+      jest.useRealTimers();
+    }
+  });
 });

@@ -286,6 +286,15 @@ mark.word-helper-highlight { background: rgba(255, 234, 167, 0.9); padding: 0 3p
   font-size: 0.95rem;
   font-weight: 400;
 }
+.wh-immersive-retry {
+  color: inherit;
+  font: inherit;
+  background: transparent;
+  border: 0;
+  padding: 0 4px;
+  text-decoration: underline;
+  cursor: pointer;
+}
 :is(li, dt, dd, figcaption, caption, td, th, [role="cell"], [role="columnheader"], [role="rowheader"]) > .wh-immersive-block {
   margin: 4px 0 0;
 }

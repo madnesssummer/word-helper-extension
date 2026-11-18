@@ -552,6 +552,9 @@ const IMMERSIVE_EXCLUDED = `${IMMERSIVE_UI}, nav, footer, body > header, [role="
 const IMMERSIVE_BOUNDARIES = `${SEMANTIC_TEXT_SELECTORS}, address, article, aside, details, dl, figure, main, ol, section, table, ul, [role="paragraph"]`;
 const PRIMARY_CONTENT = 'main, article, [role="main"]';
 const MAX_CONCURRENT = 3;
+const MAX_BATCH_PARAGRAPHS = 6;
+const MAX_BATCH_CHARACTERS = 6000;
+const MAX_TRANSLATION_CACHE = 200;
 
 let immersiveEnabled = false;
 let immersivePageKey = '';
@@ -560,6 +563,11 @@ let wordBookSet = new Set();   // 单词本中的词（小写），跳过翻译
 let translateQueue = [];
 let activeRequests = 0;
 let immersiveWork = new WeakMap();
+let immersiveGroups = new Map();
+let immersiveCache = new Map();
+let drainTimer = null;
+let firstBatch = true;
+let paragraphId = 0;
 let iObserver = null;   // IntersectionObserver
 let mObserver = null;   // MutationObserver
 
@@ -624,8 +632,20 @@ function enqueue(el) {
   if (!text) return;
   const work = { el, text, sessionId: immersiveSessionId, block: null };
   immersiveWork.set(el, work);
-  translateQueue.push(work);
-  drain();
+  showImmersiveLoading(work);
+  if (immersiveCache.has(text)) {
+    finishImmersiveWork(work, immersiveCache.get(text));
+    return;
+  }
+  const existing = immersiveGroups.get(text);
+  if (existing) {
+    existing.works.push(work);
+    return;
+  }
+  const group = { id: String(++paragraphId), text, works: [work] };
+  immersiveGroups.set(text, group);
+  translateQueue.push(group);
+  scheduleImmersiveDrain();
 }
 
 function isCurrentImmersiveWork(work) {
@@ -633,12 +653,45 @@ function isCurrentImmersiveWork(work) {
     immersiveWork.get(work.el) === work && getImmersivePageKey() === immersivePageKey;
 }
 
+function scheduleImmersiveDrain() {
+  if (!immersiveEnabled || drainTimer !== null) return;
+  // Collect the current IntersectionObserver delivery before dispatching a batch.
+  drainTimer = setTimeout(() => {
+    drainTimer = null;
+    drain();
+  }, 0);
+}
+
 function drain() {
+  translateQueue = translateQueue.filter(group => {
+    group.works = group.works.filter(isCurrentImmersiveWork);
+    if (group.works.length) return true;
+    if (immersiveGroups.get(group.text) === group) immersiveGroups.delete(group.text);
+    return false;
+  });
+  const priority = group => group.works.some(({ el }) => {
+    const rect = el.getBoundingClientRect();
+    return rect.bottom >= 0 && rect.top < window.innerHeight;
+  }) ? 0 : 1;
+  const priorities = new Map(translateQueue.map(group => [group, priority(group)]));
+  translateQueue.sort((a, b) => priorities.get(a) - priorities.get(b));
   while (activeRequests < MAX_CONCURRENT && translateQueue.length > 0) {
-    const work = translateQueue.shift();
-    if (!isCurrentImmersiveWork(work)) continue;
+    const batch = [];
+    let characters = 0;
+    const limit = firstBatch ? 2 : MAX_BATCH_PARAGRAPHS;
+    const budget = firstBatch ? 1200 : MAX_BATCH_CHARACTERS;
+    while (translateQueue.length && batch.length < limit) {
+      const group = translateQueue[0];
+      if (batch.length && characters + group.text.length > budget) break;
+      batch.push(translateQueue.shift());
+      characters += group.text.length;
+    }
+    firstBatch = false;
     activeRequests++;
-    translateEl(work).finally(() => { activeRequests--; drain(); });
+    translateBatch(batch).finally(() => {
+      activeRequests--;
+      if (translateQueue.length) scheduleImmersiveDrain();
+    });
   }
 }
 
@@ -655,19 +708,34 @@ function showImmersiveLoading(work) {
   el.insertBefore(loading, nestedList || null);
 }
 
-async function translateEl(work) {
-  showImmersiveLoading(work);
-  let translation = '';
+async function translateBatch(batch) {
+  let translations = [];
+  let error = '';
   try {
-    const { ok, data } = await chrome.runtime.sendMessage({
-      type: 'TRANSLATE_PARAGRAPH',
-      payload: { text: work.text, context: {} }
+    const response = await chrome.runtime.sendMessage({
+      type: 'TRANSLATE_PARAGRAPHS',
+      payload: {
+        paragraphs: batch.map(({ id, text }) => ({ id, text }))
+      }
     });
-    if (ok) translation = data?.translation;
+    if (response.ok && Array.isArray(response.data?.translations)) translations = response.data.translations;
+    else error = response.error;
   } catch (_) {
-    // Other paragraphs continue when a request fails.
+    error = 'QWEN_REQUEST_FAILED:NETWORK';
   }
-  finishImmersiveWork(work, translation);
+  for (const group of batch) {
+    // A stopped session must never populate a new session's cache or in-flight map.
+    if (immersiveGroups.get(group.text) !== group) continue;
+    immersiveGroups.delete(group.text);
+    const matches = translations.filter(item => item.id === group.id);
+    const translation = matches.length === 1 && typeof matches[0].translation === 'string'
+      ? matches[0].translation.trim() : '';
+    if (translation) {
+      if (immersiveCache.size >= MAX_TRANSLATION_CACHE) immersiveCache.delete(immersiveCache.keys().next().value);
+      immersiveCache.set(group.text, translation);
+    }
+    group.works.forEach(work => finishImmersiveWork(work, translation, error || matches[0]?.error));
+  }
 }
 
 function finishImmersiveWork(work, translation, error) {
@@ -681,8 +749,23 @@ function finishImmersiveWork(work, translation, error) {
     loading.textContent = translation;
     loading.classList.remove(`${IMMERSIVE_CLASS}--loading`);
   } else {
-    loading.remove();
-    immersiveWork.delete(el);
+    loading.classList.remove(`${IMMERSIVE_CLASS}--loading`);
+    loading.textContent = '翻译失败 ';
+    loading.title = formatTranslateError(error || 'QWEN_INVALID_TRANSLATION');
+    const retry = document.createElement('button');
+    retry.type = 'button';
+    retry.className = 'wh-immersive-retry';
+    retry.textContent = '重试';
+    retry.title = loading.title;
+    retry.addEventListener('click', event => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (!isCurrentImmersiveWork(work)) return;
+      loading.remove();
+      immersiveWork.delete(el);
+      enqueue(el);
+    });
+    loading.append(retry);
   }
 }
 
@@ -756,6 +839,10 @@ function stopImmersive() {
   immersiveSessionId++;
   translateQueue = [];
   immersiveWork = new WeakMap();
+  immersiveGroups = new Map();
+  immersiveCache = new Map();
+  firstBatch = true;
+  clearTimeout(drainTimer);
   drainTimer = null;
   iObserver?.disconnect(); iObserver = null;
   mObserver?.disconnect(); mObserver = null;

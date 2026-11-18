@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Immersive translation checks</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="../card.css">
+<style>
+  body { font: 16px sans-serif; }
+  .block-span { display: block; }
+  main { max-width: 720px; }
+  .wh-immersive-block { margin: 2px 0; line-height: 1.2; }
+  #spacer { height: 1800px; }
+</style>
+<output id="status">Running checks</output>
+<header><div>Toolbar text</div></header>
+<nav><p>Navigation text</p></nav>
+<main>
+  <article id="article">
+    <header><h1 id="heading">Quick start</h1></header>
+    <div id="standalone">Read the <a href="#guide">guide</a>.</div>
+    <section>
+      <p id="paragraph">Connect <em>your device</em>. <button>Skip control</button></p>
+      <span class="block-span" id="block-span">Docs</span>
+      <p id="hidden" hidden>Hidden prose</p>
+      <p lang="zh">纯中文不翻译</p>
+      <p translate="no">Brand name here</p>
+      <p contenteditable>Editable prose</p>
+      <pre><code>Ignore this code</code></pre>
+    </section>
+    <figure><figcaption id="caption">Data flow</figcaption></figure>
+    <table><tbody><tr><th id="header">Name</th><td id="cell">Config</td></tr></tbody></table>
+    <ul><li id="outer">Parent item<ul><li id="inner">Child item</li></ul></li></ul>
+    <p id="duplicate-a">Docs</p>
+    <p id="duplicate-b">Docs</p>
+    <div id="dynamic">等待更新</div>
+    <div id="spacer"></div>
+    <p id="below">Below the fold</p>
+  </article>
+</main>
+<script>
+  const listeners = [];
+  const requests = [];
+  const batches = [];
+  const metrics = { mode: new URLSearchParams(location.search).has('baseline') ? 'baseline' : 'optimized' };
+  let active = 0;
+  let maxActive = 0;
+  let networkCalls = 0;
+  let fault = true;
+  const networkQueue = [];
+  function network(task) {
+    return new Promise(resolve => {
+      networkQueue.push({ task, resolve });
+      pump();
+    });
+  }
+  function pump() {
+    while (active < 3 && networkQueue.length) {
+      const { task, resolve } = networkQueue.shift();
+      active++;
+      networkCalls++;
+      maxActive = Math.max(maxActive, active);
+      task().then(resolve).finally(() => { active--; pump(); });
+    }
+  }
+  let resolveOld;
+  async function batchReply(paragraphs) {
+    if (paragraphs.some(item => ['Old dynamic request', 'Session delayed request'].includes(item.text))) {
+      await new Promise(resolve => { resolveOld = resolve; });
+    }
+    await new Promise(resolve => setTimeout(resolve, 80 + paragraphs.length * 20));
+    return paragraphs.slice().reverse().map(({ id, text }) => {
+      if (text === 'Retry this paragraph' && fault) {
+        fault = false;
+        return { id, error: 'QWEN_INVALID_TRANSLATION' };
+      }
+      return { id, translation: 'Translated: ' + text };
+    });
+  }
+  window.chrome = {
+    runtime: {
+      onMessage: { addListener: listener => listeners.push(listener) },
+      async sendMessage({ type, payload }) {
+        if (type !== 'TRANSLATE_PARAGRAPHS') return { ok: true, data: {} };
+        const { paragraphs } = payload;
+        requests.push(...paragraphs.map(item => item.text));
+        batches.push(paragraphs);
+        const translations = metrics.mode === 'baseline'
+          ? (await Promise.all(paragraphs.map(item => network(() => batchReply([item]))))).flat()
+          : await network(() => batchReply(paragraphs));
+        return { ok: true, data: { translations } };
+      }
+    }
+  };
+</script>
+<script src="../content-script.js"></script>
+<script>
+  const byId = (id) => document.getElementById(id);
+  const generated = (id) => byId(id).querySelector(':scope > .wh-immersive-block');
+  const rendered = (id, text) => generated(id)?.textContent === 'Translated: ' + text;
+  const expected = {
+    heading: 'Quick start',
+    standalone: 'Read the guide.',
+    paragraph: 'Connect your device.',
+    'block-span': 'Docs',
+    caption: 'Data flow',
+    header: 'Name',
+    cell: 'Config',
+    outer: 'Parent item',
+    inner: 'Child item'
+  };
+  const toggle = (enabled) => new Promise(resolve => {
+    for (const listener of listeners) listener({ type: 'TOGGLE_IMMERSIVE', payload: { enabled } }, {}, resolve);
+  });
+  const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+  async function until(check, label) {
+    for (let attempt = 0; attempt < 160; attempt++) {
+      if (check()) return;
+      await delay(25);
+    }
+    throw new Error(label);
+  }
+  function assert(condition, label) {
+    if (!condition) throw new Error(label);
+  }
+  (async () => {
+    const startedAt = performance.now();
+    const monitor = new MutationObserver(() => {
+      if (metrics.firstTranslationMs === undefined && document.querySelector('.wh-immersive-block:not(.wh-immersive-block--loading)')) {
+        metrics.firstTranslationMs = Math.round(performance.now() - startedAt);
+      }
+    });
+    monitor.observe(document.body, { childList: true, characterData: true, subtree: true });
+    const started = await toggle(true);
+    assert(started.ok, 'Could not enable the translation engine');
+    await until(() => Object.entries(expected).every(([id, text]) => rendered(id, text)),
+      'Missing semantic or standalone text: ' + requests.join('; '));
+    metrics.initialCompleteMs = Math.round(performance.now() - startedAt);
+    metrics.initialNetworkCalls = networkCalls;
+    metrics.originalParagraphCalls = Object.keys(expected).length + 2;
+    assert(batches[0].length <= 2, 'The first batch is too large');
+    assert(batches.every(batch => batch.length <= 6), 'A batch exceeded the paragraph limit');
+    assert(rendered('duplicate-a', 'Docs') && rendered('duplicate-b', 'Docs'), 'Repeated text did not share its request');
+    assert(!requests.includes('Below the fold'), 'Off-screen text was sent before scrolling');
+    assert(requests.every(text => Object.values(expected).includes(text)),
+      'Unexpected request: ' + requests.join('; '));
+    assert(new Set(requests).size === requests.length, 'Duplicate requests');
+    assert(generated('outer').nextElementSibling.tagName === 'UL', 'Outer translation should precede the nested list');
+    assert(byId('cell').parentElement.children.length === 2, 'Translation broke the table row');
+
+    const cached = document.createElement('p');
+    cached.id = 'cached';
+    cached.textContent = 'Docs';
+    byId('dynamic').before(cached);
+    await until(() => rendered('cached', 'Docs'), 'A repeated paragraph was not rendered from cache');
+    assert(requests.filter(text => text === 'Docs').length === 1, 'Cached text triggered another request');
+    byId('dynamic').firstChild.data = 'Old dynamic request';
+    byId('dynamic').scrollIntoView({ block: 'center' });
+    await until(() => typeof resolveOld === 'function', 'The original dynamic request was not sent');
+    byId('dynamic').firstChild.data = 'Updated dynamic text';
+    await until(() => rendered('dynamic', 'Updated dynamic text'), 'Character data changes were not translated');
+    resolveOld();
+    const extra = document.createElement('p');
+    extra.id = 'added';
+    extra.textContent = 'Inserted text';
+    byId('dynamic').after(extra);
+    byId('paragraph').textContent = 'Replacement paragraph';
+    byId('hidden').hidden = false;
+    await until(() => rendered('added', 'Inserted text'), 'Inserted prose was not translated');
+    byId('paragraph').scrollIntoView();
+    await until(() => rendered('paragraph', 'Replacement paragraph') &&
+      rendered('hidden', 'Hidden prose'), 'Replaced or revealed prose was not translated');
+    assert(rendered('dynamic', 'Updated dynamic text'), 'A stale response overwrote updated text');
+    extra.textContent = 'Retry this paragraph';
+    extra.scrollIntoView({ block: 'center' });
+    await until(() => generated('added')?.querySelector('button'), 'Missing failure retry control');
+    generated('added').querySelector('button').click();
+    await until(() => rendered('added', 'Retry this paragraph'), 'Retry did not recover');
+    assert(maxActive <= 3, 'The network concurrency limit was exceeded');
+    byId('below').scrollIntoView();
+    await until(() => rendered('below', 'Below the fold'), 'Off-screen prose was not translated on scroll');
+    resolveOld = null;
+    byId('dynamic').firstChild.data = 'Session delayed request';
+    byId('dynamic').scrollIntoView({ block: 'center' });
+    await until(() => typeof resolveOld === 'function', 'Missing delayed request before restart');
+    const oldSessionReply = resolveOld;
+    await toggle(false);
+    await toggle(true);
+    await until(() => resolveOld !== oldSessionReply, 'The new session did not send its own request');
+    oldSessionReply();
+    await delay(250);
+    assert(!rendered('dynamic', 'Session delayed request'), 'The old session response populated the new session');
+    resolveOld();
+    await until(() => rendered('dynamic', 'Session delayed request'), 'The new session response did not render');
+    await toggle(false);
+    assert(!document.querySelector('.wh-immersive-block'), 'Turning translation off left generated content behind');
+    assert(byId('dynamic').textContent === 'Session delayed request', 'Original content changed');
+    monitor.disconnect();
+    metrics.maxActive = maxActive;
+    byId('status').textContent = 'PASS: coverage, batches, deduplication, cache, retry, dynamic updates, scrolling, restart, cleanup; ' + JSON.stringify(metrics);
+  })().catch(error => { byId('status').textContent = 'FAIL: ' + error.message; });
+</script>
+</html>
