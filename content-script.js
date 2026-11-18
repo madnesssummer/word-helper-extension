@@ -54,14 +54,14 @@ async function handleContextTranslate(payload) {
 
   const mode = payload.mode === 'auto' ? detectSelectionMode(selectedText) : (payload.mode === 'term' ? 'term' : 'sentence');
   removeTranslateTrigger();
-  showDeepSeekLoading(selectionInfo.x, selectionInfo.y, selectedText, mode);
+  showTranslationLoading(selectionInfo.x, selectionInfo.y, selectedText, mode);
 
   try {
     const context = mode === 'term'
       ? buildTermContext(selectionInfo)
       : buildSentenceContext(selectionInfo);
     const response = await chrome.runtime.sendMessage({
-      type: 'TRANSLATE_SELECTION_DEEPSEEK',
+      type: 'TRANSLATE_SELECTION',
       payload: {
         mode,
         selectedText,
@@ -70,12 +70,12 @@ async function handleContextTranslate(payload) {
     });
 
     if (response?.ok) {
-      await showDeepSeekResult(selectionInfo.x, selectionInfo.y, selectedText, mode, response.data?.result);
+      await showTranslationResult(selectionInfo.x, selectionInfo.y, selectedText, mode, response.data?.result);
     } else {
-      showDeepSeekError(selectionInfo.x, selectionInfo.y, selectedText, response?.error || 'TRANSLATION_FAILED');
+      showTranslationError(selectionInfo.x, selectionInfo.y, selectedText, response?.error || 'TRANSLATION_FAILED');
     }
   } catch (error) {
-    showDeepSeekError(selectionInfo.x, selectionInfo.y, selectedText, error?.message || 'TRANSLATION_FAILED');
+    showTranslationError(selectionInfo.x, selectionInfo.y, selectedText, error?.message || 'TRANSLATION_FAILED');
   }
 }
 
@@ -194,25 +194,25 @@ function extractSentenceBundle(text, selectedText) {
   };
 }
 
-function showDeepSeekLoading(x, y, selectedText, mode) {
+function showTranslationLoading(x, y, selectedText, mode) {
   removeCard();
   cardRoot = document.createElement('div');
-  cardRoot.className = 'word-helper-card word-helper-card--deepseek';
+  cardRoot.className = 'word-helper-card word-helper-card--translation';
   applyRandomCardTheme(cardRoot);
   cardRoot.style.left = `${x + 10}px`;
   cardRoot.style.top = `${y + 10}px`;
   cardRoot.innerHTML = `
     <div class="wh-title">${escapeHtml(mode === 'term' ? '词义解析' : '句段翻译')}</div>
     <div class="wh-selected-text">${escapeHtml(selectedText)}</div>
-    <div class="wh-loading">DeepSeek 分析中...</div>
+    <div class="wh-loading">千问翻译中...</div>
   `;
   document.body.appendChild(cardRoot);
 }
 
-async function showDeepSeekResult(x, y, selectedText, mode, result) {
+async function showTranslationResult(x, y, selectedText, mode, result) {
   removeCard();
   cardRoot = document.createElement('div');
-  cardRoot.className = 'word-helper-card word-helper-card--deepseek';
+  cardRoot.className = 'word-helper-card word-helper-card--translation';
   applyRandomCardTheme(cardRoot);
   cardRoot.style.left = `${x + 10}px`;
   cardRoot.style.top = `${y + 10}px`;
@@ -240,7 +240,7 @@ async function showDeepSeekResult(x, y, selectedText, mode, result) {
   cardRoot.innerHTML = html;
   document.body.appendChild(cardRoot);
   if (mode === 'term') {
-    bindDeepSeekTermActions(selectedText, result || {}, inWordBook);
+    bindTranslationTermActions(selectedText, result || {}, inWordBook);
   }
   attachAutoDismissCard(cardRoot);
 }
@@ -251,9 +251,9 @@ function buildTermResultHtml(selectedText, result, queryStats, inWordBook) {
   return `
     <div class="wh-title">
       ${escapeHtml(selectedText)}
-      ${buildSpeakButton('wh-deepseek-speak')}
+      ${buildSpeakButton('wh-translation-speak')}
       <span class="wh-type-tag">词/短语</span>
-      ${buildHeartButton('wh-deepseek-heart', inWordBook)}
+      ${buildHeartButton('wh-translation-heart', inWordBook)}
     </div>
     <div class="wh-query-stats">查询次数: ${queryCount} 次</div>
     <div class="wh-result-main">${escapeHtml(result.meaningInContext || result.translation || '')}</div>
@@ -262,17 +262,17 @@ function buildTermResultHtml(selectedText, result, queryStats, inWordBook) {
   `;
 }
 
-function bindDeepSeekTermActions(word, result, inWordBook) {
-  bindSpeakButton('wh-deepseek-speak', word);
+function bindTranslationTermActions(word, result, inWordBook) {
+  bindSpeakButton('wh-translation-speak', word);
   bindWordBookHeart(
-    'wh-deepseek-heart',
+    'wh-translation-heart',
     word,
-    buildDeepSeekWordBookEntry(result),
+    buildTranslationWordBookEntry(result),
     inWordBook
   );
 }
 
-function buildDeepSeekWordBookEntry(result) {
+function buildTranslationWordBookEntry(result) {
   return {
     meaning: result.meaningInContext || result.translation || '暂无释义',
     partOfSpeech: result.partOfSpeech || ''
@@ -287,10 +287,10 @@ function buildSentenceResultHtml(selectedText, result) {
   `;
 }
 
-function showDeepSeekError(x, y, selectedText, error) {
+function showTranslationError(x, y, selectedText, error) {
   removeCard();
   cardRoot = document.createElement('div');
-  cardRoot.className = 'word-helper-card word-helper-card--deepseek';
+  cardRoot.className = 'word-helper-card word-helper-card--translation';
   cardRoot.style.setProperty('--wh-gradient', 'linear-gradient(135deg, #ef4444 0%, #f97316 100%)');
   cardRoot.style.left = `${x + 10}px`;
   cardRoot.style.top = `${y + 10}px`;
@@ -318,8 +318,9 @@ function attachAutoDismissCard(card) {
 }
 
 function formatTranslateError(error) {
-  if (error === 'DEEPSEEK_API_KEY_MISSING') return '请先在扩展设置页填写 DeepSeek API Key。';
-  if (String(error).startsWith('DEEPSEEK_REQUEST_FAILED')) return 'DeepSeek 请求失败，请检查 API Key、网络或额度。';
+  if (error === 'QWEN_API_KEY_MISSING') return '请先在扩展设置页填写百炼 API Key。';
+  if (String(error).startsWith('QWEN_REQUEST_FAILED')) return '千问请求失败，请检查 API Key、模型、网络或额度。';
+  if (error === 'QWEN_INVALID_TRANSLATION' || error === 'QWEN_EMPTY_RESPONSE') return '千问没有返回有效译文，请重试。';
   return String(error || '未知错误');
 }
 

@@ -2,9 +2,9 @@ const DEFAULT_SETTINGS = {
   highlight: true,
   language: 'en',
   dailyReviewCount: 5,
-  deepseek: {
+  qwen: {
     apiKey: '',
-    model: 'deepseek-chat',
+    model: 'qwen3.8-flash',
     targetLanguage: 'zh-CN'
   }
 };
@@ -14,12 +14,14 @@ function getEl(id) {
 }
 
 function mergeSettings(settings) {
+  const { deepseek: legacy, qwen, ...saved } = settings || {};
   return {
     ...DEFAULT_SETTINGS,
-    ...(settings || {}),
-    deepseek: {
-      ...DEFAULT_SETTINGS.deepseek,
-      ...((settings || {}).deepseek || {})
+    ...saved,
+    qwen: {
+      ...DEFAULT_SETTINGS.qwen,
+      ...qwen,
+      targetLanguage: qwen?.targetLanguage || legacy?.targetLanguage || DEFAULT_SETTINGS.qwen.targetLanguage
     }
   };
 }
@@ -42,9 +44,9 @@ async function loadSettings() {
   getEl('highlight').checked = !!s.highlight;
   getEl('language').value = s.language || 'en';
   getEl('dailyReviewCount').value = s.dailyReviewCount || 5;
-  getEl('deepseekApiKey').value = s.deepseek.apiKey || '';
-  getEl('deepseekModel').value = s.deepseek.model || 'deepseek-chat';
-  getEl('deepseekTargetLanguage').value = s.deepseek.targetLanguage || 'zh-CN';
+  getEl('qwenApiKey').value = s.qwen.apiKey || '';
+  getEl('qwenModel').value = s.qwen.model || DEFAULT_SETTINGS.qwen.model;
+  getEl('qwenTargetLanguage').value = s.qwen.targetLanguage;
 }
 
 async function saveSettings() {
@@ -66,11 +68,11 @@ async function saveSettings() {
         highlight: getEl('highlight').checked,
         language: getEl('language').value,
         dailyReviewCount: validCount,
-        deepseek: {
-          ...current.deepseek,
-          apiKey: getEl('deepseekApiKey').value.trim(),
-          model: getEl('deepseekModel').value.trim() || DEFAULT_SETTINGS.deepseek.model,
-          targetLanguage: getEl('deepseekTargetLanguage').value || DEFAULT_SETTINGS.deepseek.targetLanguage
+        qwen: {
+          ...current.qwen,
+          apiKey: getEl('qwenApiKey').value.trim(),
+          model: getEl('qwenModel').value.trim() || DEFAULT_SETTINGS.qwen.model,
+          targetLanguage: getEl('qwenTargetLanguage').value || DEFAULT_SETTINGS.qwen.targetLanguage
         }
       }
     });

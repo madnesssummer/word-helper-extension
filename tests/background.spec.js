@@ -1,4 +1,4 @@
-/** @jest-environment jsdom */
+/** @jest-environment node */
 
 global.chrome = {
   storage: {
@@ -139,4 +139,106 @@ describe('background word book storage', () => {
       wrongCount: 1
     });
   });
+});
+
+describe('Qwen translation and weekly review', () => {
+  const originalFetch = global.fetch;
+
+  beforeEach(() => {
+    chrome.storage.local._data = {
+      settings: {
+        qwen: { apiKey: 'test-bailian-key' },
+        deepseek: { apiKey: 'test-legacy-key', model: 'deepseek-chat', targetLanguage: 'zh-TW' }
+      }
+    };
+    global.fetch = jest.fn();
+  });
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+  });
+
+  const mockContent = (content) => {
+    global.fetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ choices: [{ message: { content } }] })
+    });
+  };
+
+  const requestBody = () => {
+    const [[url, request]] = global.fetch.mock.calls;
+    expect(url).toBe('https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions');
+    expect(request.headers.Authorization).toBe('Bearer test-bailian-key');
+    expect(request.method).toBe('POST');
+    return JSON.parse(request.body);
+  };
+
+  test('explains a term with its sentence using the Qwen JSON format', async () => {
+    const result = { meaningInContext: '模組', partOfSpeech: 'noun', explanation: '指獨立的功能單元。' };
+    mockContent(JSON.stringify(result));
+    const sentence = 'These modules can be installed separately.';
+    expect(await sendMessage('TRANSLATE_SELECTION', {
+      mode: 'term', selectedText: 'modules', context: { sentence }
+    })).toEqual({ ok: true, data: { mode: 'term', result } });
+
+    const body = requestBody();
+    expect(body).toMatchObject({
+      model: 'qwen3.8-flash', enable_thinking: false, response_format: { type: 'json_object' }
+    });
+    expect(JSON.parse(body.messages[1].content)).toMatchObject({
+      type: 'word_or_phrase_explanation', selectedText: 'modules', targetLanguage: 'zh-TW', context: { sentence }
+    });
+  });
+
+  test.each(['TRANSLATE_PARAGRAPH', 'TRANSLATE_SELECTION'])('translates text through %s', async (type) => {
+    const result = { translation: '譯文' };
+    mockContent(JSON.stringify(result));
+    const response = await sendMessage(type, { text: 'Source text.', selectedText: 'Source text.' });
+    expect(response).toEqual({
+      ok: true,
+      data: type === 'TRANSLATE_PARAGRAPH' ? result : { mode: 'sentence', result }
+    });
+    const body = requestBody();
+    expect(JSON.parse(body.messages[1].content)).toMatchObject({
+      type: 'sentence_translation', sourceText: 'Source text.'
+    });
+  });
+
+  test('uses Qwen plain text for the weekly review', async () => {
+    mockContent(' 多复习收藏的词。 ');
+    const response = await sendMessage('GENERATE_WEEKLY_REVIEW');
+    expect(response).toMatchObject({ ok: true, data: { review: '多复习收藏的词。' } });
+    const body = requestBody();
+    expect(body.enable_thinking).toBe(false);
+    expect(body).not.toHaveProperty('response_format');
+  });
+
+  test('does not send or expose the old DeepSeek key', async () => {
+    delete chrome.storage.local._data.settings.qwen;
+    expect(await sendMessage('TRANSLATE_PARAGRAPH', { text: 'Source text.' }))
+      .toEqual({ ok: false, error: 'QWEN_API_KEY_MISSING' });
+    expect(global.fetch).not.toHaveBeenCalled();
+    const { data } = await sendMessage('GET_SETTINGS');
+    expect(data.qwen.targetLanguage).toBe('zh-TW');
+    expect(data).not.toHaveProperty('deepseek');
+    expect(data.qwen).not.toHaveProperty('apiKey');
+  });
+
+  test('does not expose the Qwen key through GET_SETTINGS', async () => {
+    const { data } = await sendMessage('GET_SETTINGS');
+    expect(data.qwen).not.toHaveProperty('apiKey');
+  });
+
+  test('does not display a malformed result as a paragraph translation', async () => {
+    mockContent('{"wrongField":"Not a translation"}');
+    expect(await sendMessage('TRANSLATE_PARAGRAPH', { text: 'Source text.' }))
+      .toEqual({ ok: false, error: 'QWEN_INVALID_TRANSLATION' });
+  });
+
+  test('returns a safe error when the provider rejects the request', async () => {
+    global.fetch.mockResolvedValueOnce({ ok: false, status: 401 });
+    expect(await sendMessage('TRANSLATE_PARAGRAPH', { text: 'Source text.' }))
+      .toEqual({ ok: false, error: 'QWEN_REQUEST_FAILED:HTTP_401' });
+  });
+
 });

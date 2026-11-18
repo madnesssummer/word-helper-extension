@@ -45,7 +45,7 @@ class WeeklySummaryPage {
   async generateReview() {
     this.regenerateBtn.disabled = true;
     this.reviewText.className = 'review-text loading';
-    this.reviewText.textContent = 'DeepSeek 正在翻你的学习账本...';
+    this.reviewText.textContent = '千问正在翻你的学习账本...';
     try {
       const data = await this.sendMessage('GENERATE_WEEKLY_REVIEW');
       this.summary = data.summary;
@@ -62,10 +62,10 @@ class WeeklySummaryPage {
   showError(error) {
     const message = String(error?.message || error || '');
     this.reviewText.className = 'review-text error';
-    if (message.includes('DEEPSEEK_API_KEY_MISSING')) {
-      this.reviewText.textContent = '还没配置 DeepSeek API Key。请先到扩展设置页填写，再回来接受锐评。';
-    } else if (message.includes('DEEPSEEK_REQUEST_FAILED')) {
-      this.reviewText.textContent = 'DeepSeek 请求失败，请检查 API Key、网络或接口额度后重试。';
+    if (message.includes('QWEN_API_KEY_MISSING')) {
+      this.reviewText.textContent = '还没配置百炼 API Key。请先到扩展设置页填写，再回来接受锐评。';
+    } else if (message.includes('QWEN_REQUEST_FAILED')) {
+      this.reviewText.textContent = '千问请求失败，请检查 API Key、网络或接口额度后重试。';
     } else {
       this.reviewText.textContent = `周总结加载失败：${message || '未知错误'}`;
     }
