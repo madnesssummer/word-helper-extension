@@ -282,6 +282,13 @@ mark.word-helper-highlight { background: rgba(255, 234, 167, 0.9); padding: 0 3p
   margin: 6px 0 18px 0;
   animation: wh-pulse 1.2s ease-in-out infinite;
 }
+.wh-immersive-block--heading {
+  font-size: 0.95rem;
+  font-weight: 400;
+}
+:is(li, dt, dd, figcaption, caption, td, th, [role="cell"], [role="columnheader"], [role="rowheader"]) > .wh-immersive-block {
+  margin: 4px 0 0;
+}
 @keyframes wh-fade-in {
   from { opacity: 0; transform: translateY(-3px); }
   to   { opacity: 1; transform: translateY(0); }

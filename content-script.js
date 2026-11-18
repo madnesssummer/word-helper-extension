@@ -163,8 +163,16 @@ function buildSentenceContext(selectionInfo) {
 function getClosestTextBlock(range) {
   const node = range?.commonAncestorContainer;
   const element = node?.nodeType === Node.TEXT_NODE ? node.parentElement : node;
-  const block = element?.closest?.('p, li, blockquote, h1, h2, h3, h4, h5, h6, article, section, main, div');
-  return (block?.textContent || document.body?.textContent || '').replace(/\s+/g, ' ').trim();
+  const block = element?.closest?.(`${SEMANTIC_TEXT_SELECTORS}, article, section, main, div`) || document.body;
+  if (!block) return '';
+  if (!block.querySelector(`.${IMMERSIVE_CLASS}`)) return block.textContent.replace(/\s+/g, ' ').trim();
+  const walker = document.createTreeWalker(block, NodeFilter.SHOW_TEXT, {
+    acceptNode: (text) => text.parentElement.closest(`.${IMMERSIVE_CLASS}`)
+      ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT
+  });
+  const parts = [];
+  while (walker.nextNode()) parts.push(walker.currentNode.nodeValue);
+  return parts.join('').replace(/\s+/g, ' ').trim();
 }
 
 function extractSentenceBundle(text, selectedText) {
@@ -535,10 +543,14 @@ function escapeRegex(s) {
 highlightWordsOnPage();
 
 // ── 沉浸式翻译引擎 ──
-const STRUCTURAL_TEXT_SELECTORS = 'p, h1, h2, h3, h4, h5, h6, li, blockquote';
-const PARA_SELECTORS = `${STRUCTURAL_TEXT_SELECTORS}, span`;
-const IMMERSIVE_ATTR = 'data-wh-translated';
+const HEADING_SELECTORS = 'h1, h2, h3, h4, h5, h6, [role="heading"]';
+const SEMANTIC_TEXT_SELECTORS = `p, ${HEADING_SELECTORS}, li, blockquote, dt, dd, figcaption, caption, th, td, [role="cell"], [role="columnheader"], [role="rowheader"]`;
+const PARA_SELECTORS = `${SEMANTIC_TEXT_SELECTORS}, main, article, section, div, span, [role="paragraph"]`;
 const IMMERSIVE_CLASS = 'wh-immersive-block';
+const IMMERSIVE_UI = `.${IMMERSIVE_CLASS}, .word-helper-card, .word-helper-trigger`;
+const IMMERSIVE_EXCLUDED = `${IMMERSIVE_UI}, nav, footer, body > header, [role="navigation"], [role="banner"], [role="contentinfo"], form, button, input, textarea, select, option, [role="button"], pre, script, style, noscript, template, svg, [hidden], [aria-hidden="true"], [contenteditable]:not([contenteditable="false"]), [translate="no"]`;
+const IMMERSIVE_BOUNDARIES = `${SEMANTIC_TEXT_SELECTORS}, address, article, aside, details, dl, figure, main, ol, section, table, ul, [role="paragraph"]`;
+const PRIMARY_CONTENT = 'main, article, [role="main"]';
 const MAX_CONCURRENT = 3;
 
 let immersiveEnabled = false;
@@ -547,6 +559,7 @@ let immersiveSessionId = 0;
 let wordBookSet = new Set();   // 单词本中的词（小写），跳过翻译
 let translateQueue = [];
 let activeRequests = 0;
+let immersiveWork = new WeakMap();
 let iObserver = null;   // IntersectionObserver
 let mObserver = null;   // MutationObserver
 
@@ -555,28 +568,34 @@ async function refreshWordBookSet() {
   if (ok) wordBookSet = new Set(Object.keys(data || {}).map(w => w.toLowerCase().trim()));
 }
 
-function shouldSkip(el) {
-  // 已处理过
-  if (el.hasAttribute(IMMERSIVE_ATTR)) return true;
-  // 本身是翻译块
-  if (el.classList.contains(IMMERSIVE_CLASS)) return true;
-  // 在代码/脚本/导航等区域内
-  if (el.closest('nav, button, input, textarea, select, option, code, pre, script, style, noscript, [role="button"], [aria-hidden="true"], [contenteditable], .word-helper-card')) return true;
-  // 一些现代文档站用块级 span 渲染正文段落；只接收独立的块级 span，
-  // 排除标题、列表和普通段落内部的内联 span，避免父子节点重复翻译。
-  if (el.tagName === 'SPAN') {
-    if (el.parentElement?.closest(STRUCTURAL_TEXT_SELECTORS)) return true;
-    const display = window.getComputedStyle(el).display;
-    if (display !== 'block' && display !== 'flow-root') return true;
+function getImmersiveSource(el) {
+  if (!el.isConnected || !el.matches(PARA_SELECTORS) || el.closest(IMMERSIVE_EXCLUDED) || el.closest('code')) return '';
+  const { display, visibility } = window.getComputedStyle(el);
+  if (display === 'none' || visibility !== 'visible') return '';
+  if (!el.matches(`${SEMANTIC_TEXT_SELECTORS}, [role="paragraph"]`) &&
+      !['block', 'flow-root', 'list-item'].includes(display)) return '';
+
+  // Inline markup belongs to its text block; nested blocks are translated independently.
+  const parts = [];
+  function read(container) {
+    for (const child of container.childNodes) {
+      if (child.nodeType === Node.TEXT_NODE) {
+        parts.push(child.nodeValue);
+      } else if (child.nodeType === Node.ELEMENT_NODE && !child.matches(IMMERSIVE_EXCLUDED)) {
+        if (el.tagName === 'LI' && child.matches('ol, ul')) continue;
+        const style = window.getComputedStyle(child);
+        if (style.display === 'none' || style.visibility !== 'visible') continue;
+        if (child.matches(IMMERSIVE_BOUNDARIES) ||
+            (!['contents', 'inline', 'ruby'].includes(style.display) && !style.display.startsWith('inline'))) return false;
+        if (child.tagName === 'BR') parts.push('\n');
+        else if (!read(child)) return false;
+      }
+    }
+    return true;
   }
-  const text = el.textContent.trim();
-  // 太短
-  if (!text || text.length < 15) return true;
-  // 全文翻译只处理英文为主的内容
-  if (!isMostlyEnglishText(text)) return true;
-  // 整段内容就是单词本中的某个词（高亮展示即可，无需翻译）
-  if (wordBookSet.has(text.toLowerCase())) return true;
-  return false;
+  if (!read(el)) return '';
+  const text = parts.join('').replace(/[^\S\n]+/g, ' ').replace(/ *\n+ */g, '\n').trim();
+  return isMostlyEnglishText(text) && !wordBookSet.has(text.toLowerCase()) ? text : '';
 }
 
 function isMostlyEnglishText(text) {
@@ -584,63 +603,86 @@ function isMostlyEnglishText(text) {
   if (!/[A-Za-z]{2,}/.test(normalized)) return false;
   const englishChars = (normalized.match(/[A-Za-z]/g) || []).length;
   const cjkChars = (normalized.match(/[\u3400-\u9FFF]/g) || []).length;
-  return englishChars >= 12 && englishChars > cjkChars * 2;
+  return englishChars >= 3 && englishChars > cjkChars * 2;
+}
+
+function observeImmersiveSource(el) {
+  const text = getImmersiveSource(el);
+  const work = immersiveWork.get(el);
+  if (work && work.text === text && (!work.block || work.block.parentElement === el)) return;
+  if (work) {
+    work.block?.remove();
+    immersiveWork.delete(el);
+  }
+  if (text) iObserver.observe(el);
+  else iObserver.unobserve(el);
 }
 
 function enqueue(el) {
-  if (shouldSkip(el) || translateQueue.some(item => item.el === el)) return;
-  el.setAttribute(IMMERSIVE_ATTR, 'pending');
-  translateQueue.push({ el, sessionId: immersiveSessionId });
+  if (immersiveWork.has(el)) return;
+  const text = getImmersiveSource(el);
+  if (!text) return;
+  const work = { el, text, sessionId: immersiveSessionId, block: null };
+  immersiveWork.set(el, work);
+  translateQueue.push(work);
   drain();
+}
+
+function isCurrentImmersiveWork(work) {
+  return immersiveEnabled && work.sessionId === immersiveSessionId && work.el.isConnected &&
+    immersiveWork.get(work.el) === work && getImmersivePageKey() === immersivePageKey;
 }
 
 function drain() {
   while (activeRequests < MAX_CONCURRENT && translateQueue.length > 0) {
-    const { el, sessionId } = translateQueue.shift();
-    if (!immersiveEnabled || sessionId !== immersiveSessionId || !el.isConnected || el.getAttribute(IMMERSIVE_ATTR) !== 'pending') continue;
+    const work = translateQueue.shift();
+    if (!isCurrentImmersiveWork(work)) continue;
     activeRequests++;
-    translateEl(el, sessionId).finally(() => { activeRequests--; drain(); });
+    translateEl(work).finally(() => { activeRequests--; drain(); });
   }
 }
 
-async function translateEl(el, sessionId) {
-  const text = el.textContent.trim();
-  if (!text || text.length < 15) { el.removeAttribute(IMMERSIVE_ATTR); return; }
-
-  // 插入加载占位
-  const loading = document.createElement('div');
+function showImmersiveLoading(work) {
+  const { el } = work;
+  const loading = document.createElement('span');
   loading.className = `${IMMERSIVE_CLASS} ${IMMERSIVE_CLASS}--loading`;
+  if (el.matches(HEADING_SELECTORS)) loading.classList.add(`${IMMERSIVE_CLASS}--heading`);
   loading.textContent = '翻译中…';
-  el.after(loading);
+  work.block = loading;
+  const nestedList = el.tagName === 'LI'
+    ? [...el.children].find(child => child.matches('ol, ul'))
+    : null;
+  el.insertBefore(loading, nestedList || null);
+}
 
+async function translateEl(work) {
+  showImmersiveLoading(work);
+  let translation = '';
   try {
-    const sentenceBundle = extractSentenceBundle(text, text);
     const { ok, data } = await chrome.runtime.sendMessage({
       type: 'TRANSLATE_PARAGRAPH',
-      payload: {
-        text,
-        context: {
-          before: sentenceBundle.before,
-          after: sentenceBundle.after
-        }
-      }
+      payload: { text: work.text, context: {} }
     });
-    loading.remove();
-    if (!immersiveEnabled || sessionId !== immersiveSessionId || getImmersivePageKey() !== immersivePageKey) return;
-    if (ok && data?.translation) {
-      el.setAttribute(IMMERSIVE_ATTR, 'done');
-      const block = document.createElement('div');
-      block.className = IMMERSIVE_CLASS;
-      block.textContent = data.translation;
-      el.after(block);
-    } else {
-      el.removeAttribute(IMMERSIVE_ATTR);
-    }
+    if (ok) translation = data?.translation;
   } catch (_) {
+    // Other paragraphs continue when a request fails.
+  }
+  finishImmersiveWork(work, translation);
+}
+
+function finishImmersiveWork(work, translation, error) {
+  const { el, text, block: loading } = work;
+  if (!isCurrentImmersiveWork(work) || getImmersiveSource(el) !== text) {
     loading.remove();
-    if (immersiveEnabled && sessionId === immersiveSessionId) {
-      el.removeAttribute(IMMERSIVE_ATTR);
-    }
+    if (isCurrentImmersiveWork(work)) observeImmersiveSource(el);
+    return;
+  }
+  if (translation) {
+    loading.textContent = translation;
+    loading.classList.remove(`${IMMERSIVE_CLASS}--loading`);
+  } else {
+    loading.remove();
+    immersiveWork.delete(el);
   }
 }
 
@@ -662,25 +704,50 @@ function startImmersive() {
     }
   }, { rootMargin: '0px 0px 300px 0px' });
 
-  document.querySelectorAll(PARA_SELECTORS).forEach(el => {
-    if (!shouldSkip(el)) iObserver.observe(el);
+  const other = [];
+  document.body.querySelectorAll(PARA_SELECTORS).forEach(el => {
+    if (el.closest(PRIMARY_CONTENT)) observeImmersiveSource(el);
+    else other.push(el);
   });
+  other.forEach(observeImmersiveSource);
 
-  // 监听动态新增段落（SPA 等）
   mObserver = new MutationObserver((mutations) => {
     if (getImmersivePageKey() !== immersivePageKey) {
       stopImmersive();
       return;
     }
-    for (const m of mutations) {
-      for (const node of m.addedNodes) {
-        if (node.nodeType !== 1) continue;
-        if (node.matches?.(PARA_SELECTORS)) { iObserver.observe(node); }
-        node.querySelectorAll?.(PARA_SELECTORS).forEach(el => iObserver.observe(el));
+    const changed = new Set();
+    function collectSubtree(el) {
+      if (el.nodeType !== Node.ELEMENT_NODE || el.matches(IMMERSIVE_UI)) return;
+      changed.add(el);
+      el.querySelectorAll(PARA_SELECTORS).forEach(node => changed.add(node));
+    }
+    for (const mutation of mutations) {
+      const { target, addedNodes, removedNodes } = mutation;
+      const el = target.nodeType === Node.ELEMENT_NODE ? target : target.parentElement;
+      if (!el || el.closest(IMMERSIVE_UI)) continue;
+      if (mutation.type === 'childList') {
+        if ([...addedNodes, ...removedNodes].every(node => node.matches?.(IMMERSIVE_UI))) continue;
+        addedNodes.forEach(collectSubtree);
+        removedNodes.forEach(node => {
+          if (!node.isConnected) collectSubtree(node);
+        });
+      } else if (mutation.type === 'attributes') {
+        collectSubtree(el);
+      }
+      for (let parent = el; parent && parent !== document.body; parent = parent.parentElement) {
+        if (parent.matches(PARA_SELECTORS) || immersiveWork.has(parent)) changed.add(parent);
       }
     }
+    changed.forEach(observeImmersiveSource);
   });
-  mObserver.observe(document.body, { childList: true, subtree: true });
+  mObserver.observe(document.body, {
+    childList: true,
+    characterData: true,
+    subtree: true,
+    attributes: true,
+    attributeFilter: ['hidden', 'aria-hidden', 'contenteditable', 'translate']
+  });
 }
 
 function stopImmersive() {
@@ -688,10 +755,11 @@ function stopImmersive() {
   immersivePageKey = '';
   immersiveSessionId++;
   translateQueue = [];
+  immersiveWork = new WeakMap();
+  drainTimer = null;
   iObserver?.disconnect(); iObserver = null;
   mObserver?.disconnect(); mObserver = null;
   document.querySelectorAll(`.${IMMERSIVE_CLASS}`).forEach(el => el.remove());
-  document.querySelectorAll(`[${IMMERSIVE_ATTR}]`).forEach(el => el.removeAttribute(IMMERSIVE_ATTR));
 }
 
 function getImmersivePageKey() {
