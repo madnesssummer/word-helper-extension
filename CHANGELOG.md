@@ -1,5 +1,11 @@
 # Change Log
 
+## 2026-11-23
+
+- Fixed omitted anonymous paragraphs in containers that also contain tagged child paragraphs, including Hacker News post introductions and comments.
+- Kept each inline text run separate from child paragraphs, preserving original links, emphasis, node order and event listeners.
+- Added browser regression coverage for mixed markup, introductions longer than 6000 characters, dynamic edits, cleanup and restart.
+
 ## 2026-11-18
 
 - Added first-screen priority, small initial batches and length-bounded paragraph batches for full-page translation.

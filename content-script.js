@@ -547,6 +547,7 @@ const HEADING_SELECTORS = 'h1, h2, h3, h4, h5, h6, [role="heading"]';
 const SEMANTIC_TEXT_SELECTORS = `p, ${HEADING_SELECTORS}, li, blockquote, dt, dd, figcaption, caption, th, td, [role="cell"], [role="columnheader"], [role="rowheader"]`;
 const PARA_SELECTORS = `${SEMANTIC_TEXT_SELECTORS}, main, article, section, div, span, [role="paragraph"]`;
 const IMMERSIVE_CLASS = 'wh-immersive-block';
+const IMMERSIVE_SOURCE_ATTR = 'data-wh-immersive-source';
 const IMMERSIVE_UI = `.${IMMERSIVE_CLASS}, .word-helper-card, .word-helper-trigger`;
 const IMMERSIVE_EXCLUDED = `${IMMERSIVE_UI}, nav, footer, body > header, [role="navigation"], [role="banner"], [role="contentinfo"], form, button, input, textarea, select, option, [role="button"], pre, script, style, noscript, template, svg, [hidden], [aria-hidden="true"], [contenteditable]:not([contenteditable="false"]), [translate="no"]`;
 const IMMERSIVE_BOUNDARIES = `${SEMANTIC_TEXT_SELECTORS}, address, article, aside, details, dl, figure, main, ol, section, table, ul, [role="paragraph"]`;
@@ -576,6 +577,54 @@ async function refreshWordBookSet() {
   if (ok) wordBookSet = new Set(Object.keys(data || {}).map(w => w.toLowerCase().trim()));
 }
 
+function isImmersiveBoundary(el) {
+  const { display, visibility } = window.getComputedStyle(el);
+  return display !== 'none' && visibility === 'visible' &&
+    (el.matches(IMMERSIVE_BOUNDARIES) ||
+      (!['contents', 'inline', 'ruby'].includes(display) && !display.startsWith('inline')));
+}
+
+function wrapMixedImmersiveText(el) {
+  if (!el.isConnected || !el.matches(PARA_SELECTORS) ||
+      el.closest(IMMERSIVE_EXCLUDED) || el.closest('code')) return [];
+  const children = [...el.childNodes];
+  const boundary = node => node.nodeType === Node.ELEMENT_NODE &&
+    !node.matches(IMMERSIVE_UI) && isImmersiveBoundary(node) &&
+    !(el.tagName === 'LI' && node.matches('ol, ul'));
+  if (!children.some(boundary)) return [];
+
+  // Anonymous text beside child paragraphs needs its own source, not the whole parent.
+  const wrappers = [];
+  let run = [];
+  function flush() {
+    const text = run.map(node => node.textContent).join('');
+    if (isMostlyEnglishText(text)) {
+      const wrapper = document.createElement('span');
+      wrapper.setAttribute(IMMERSIVE_SOURCE_ATTR, '');
+      wrapper.style.display = 'block';
+      el.insertBefore(wrapper, run[0]);
+      run.forEach(node => wrapper.append(node));
+      wrappers.push(wrapper);
+    }
+    run = [];
+  }
+  for (const child of children) {
+    if (boundary(child) || (child.nodeType === Node.ELEMENT_NODE && child.matches(IMMERSIVE_EXCLUDED))) {
+      flush();
+    } else if (child.nodeType === Node.TEXT_NODE || child.nodeType === Node.ELEMENT_NODE) {
+      run.push(child);
+    }
+  }
+  flush();
+  return wrappers;
+}
+
+function prepareImmersiveSources(root) {
+  const elements = [...root.querySelectorAll(PARA_SELECTORS)];
+  if (root.matches?.(PARA_SELECTORS)) elements.unshift(root);
+  elements.reverse().forEach(wrapMixedImmersiveText);
+}
+
 function getImmersiveSource(el) {
   if (!el.isConnected || !el.matches(PARA_SELECTORS) || el.closest(IMMERSIVE_EXCLUDED) || el.closest('code')) return '';
   const { display, visibility } = window.getComputedStyle(el);
@@ -593,8 +642,7 @@ function getImmersiveSource(el) {
         if (el.tagName === 'LI' && child.matches('ol, ul')) continue;
         const style = window.getComputedStyle(child);
         if (style.display === 'none' || style.visibility !== 'visible') continue;
-        if (child.matches(IMMERSIVE_BOUNDARIES) ||
-            (!['contents', 'inline', 'ruby'].includes(style.display) && !style.display.startsWith('inline'))) return false;
+        if (isImmersiveBoundary(child)) return false;
         if (child.tagName === 'BR') parts.push('\n');
         else if (!read(child)) return false;
       }
@@ -787,6 +835,7 @@ function startImmersive() {
     }
   }, { rootMargin: '0px 0px 300px 0px' });
 
+  prepareImmersiveSources(document.body);
   const other = [];
   document.body.querySelectorAll(PARA_SELECTORS).forEach(el => {
     if (el.closest(PRIMARY_CONTENT)) observeImmersiveSource(el);
@@ -802,6 +851,7 @@ function startImmersive() {
     const changed = new Set();
     function collectSubtree(el) {
       if (el.nodeType !== Node.ELEMENT_NODE || el.matches(IMMERSIVE_UI)) return;
+      prepareImmersiveSources(el);
       changed.add(el);
       el.querySelectorAll(PARA_SELECTORS).forEach(node => changed.add(node));
     }
@@ -819,6 +869,7 @@ function startImmersive() {
         collectSubtree(el);
       }
       for (let parent = el; parent && parent !== document.body; parent = parent.parentElement) {
+        wrapMixedImmersiveText(parent).forEach(node => changed.add(node));
         if (parent.matches(PARA_SELECTORS) || immersiveWork.has(parent)) changed.add(parent);
       }
     }
@@ -847,6 +898,9 @@ function stopImmersive() {
   iObserver?.disconnect(); iObserver = null;
   mObserver?.disconnect(); mObserver = null;
   document.querySelectorAll(`.${IMMERSIVE_CLASS}`).forEach(el => el.remove());
+  document.querySelectorAll(`[${IMMERSIVE_SOURCE_ATTR}]`).forEach(el => {
+    el.replaceWith(...el.childNodes);
+  });
 }
 
 function getImmersivePageKey() {

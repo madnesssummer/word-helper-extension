@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mixed paragraph translation checks</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="../card.css">
+<style>
+  body { font: 16px sans-serif; max-width: 850px; margin: 24px auto; }
+  .wh-immersive-block { margin: 4px 0 12px; }
+</style>
+<output id="status">Running checks</output>
+<main>
+  <div id="mixed">An introductory paragraph with <em id="emphasis">inline emphasis</em> and a <a id="link" href="#guide">working link</a>.<p id="child">A separately tagged second paragraph.</p>A concluding paragraph without a tag.</div>
+  <div id="comment">A comment starts without its own paragraph tag.<p id="comment-child">Another paragraph inside the same comment.</p></div>
+  <span id="inline-parent">An anonymous introduction in an inline container.<p id="inline-child">A child paragraph in the inline container.</p></span>
+  <div id="long"><p id="after-long">A tagged paragraph following a long introduction.</p></div>
+  <div id="dynamic"></div>
+</main>
+<script>
+  const byId = id => document.getElementById(id);
+  const longText = 'This is a long anonymous paragraph used to verify that length alone does not skip the source. '.repeat(80).trim();
+  byId('long').prepend(document.createTextNode(longText));
+  const originals = [...byId('mixed').childNodes];
+  const originalLink = byId('link');
+  const originalEmphasis = byId('emphasis');
+  let linkClicks = 0;
+  originalLink.addEventListener('click', event => { event.preventDefault(); linkClicks++; });
+  const calls = [];
+  const listeners = [];
+  window.chrome = {
+    runtime: {
+      onMessage: { addListener: listener => listeners.push(listener) },
+      async sendMessage({ type, payload }) {
+        if (type !== 'TRANSLATE_PARAGRAPHS') return { ok: true, data: {} };
+        calls.push(...payload.paragraphs.map(item => item.text));
+        return { ok: true, data: { translations: payload.paragraphs.slice().reverse().map(({ id, text }) =>
+          ({ id, translation: 'Translated: ' + text })) } };
+      }
+    }
+  };
+</script>
+<script src="../content-script.js"></script>
+<script>
+  const assert = (condition, label) => { if (!condition) throw new Error(label); };
+  const toggle = enabled => new Promise(resolve => {
+    listeners.forEach(listener => listener({ type: 'TOGGLE_IMMERSIVE', payload: { enabled } }, {}, resolve));
+  });
+  async function until(check, label) {
+    for (let attempt = 0; attempt < 200; attempt++) {
+      if (check()) return;
+      await new Promise(resolve => setTimeout(resolve, 20));
+    }
+    throw new Error(label);
+  }
+  const translations = root => [...root.querySelectorAll('.wh-immersive-block:not(.wh-immersive-block--loading)')];
+  const expected = {
+    mixed: ['An introductory paragraph with inline emphasis and a working link.', 'A separately tagged second paragraph.', 'A concluding paragraph without a tag.'],
+    comment: ['A comment starts without its own paragraph tag.', 'Another paragraph inside the same comment.'],
+    'inline-parent': ['An anonymous introduction in an inline container.', 'A child paragraph in the inline container.'],
+    long: [longText, 'A tagged paragraph following a long introduction.']
+  };
+  (async () => {
+    await toggle(true);
+    for (const [id, texts] of Object.entries(expected)) {
+      const sources = [...byId(id).children].filter(node => node.matches('p, [data-wh-immersive-source]'));
+      for (const [index, text] of texts.entries()) {
+        sources[index].scrollIntoView();
+        await until(() => translations(sources[index])[0]?.textContent === 'Translated: ' + text,
+          'Missing or incorrectly positioned paragraph ' + index + ' in ' + id);
+      }
+    }
+    const expectedCalls = Object.values(expected).flat();
+    assert(calls.length === expectedCalls.length && expectedCalls.every(text => calls.filter(item => item === text).length === 1),
+      'Parent and child text was merged or translated more than once');
+    assert(byId('link') === originalLink && byId('emphasis') === originalEmphasis, 'Inline elements were recreated');
+    originalLink.click();
+    assert(linkClicks === 1, 'The link event listener was lost');
+
+    byId('dynamic').innerHTML = 'An anonymous dynamically inserted introduction.<p>A dynamically inserted tagged paragraph.</p>';
+    byId('dynamic').scrollIntoView();
+    await until(() => translations(byId('dynamic')).length === 2, 'New mixed content was not translated');
+    const dynamicSource = byId('dynamic').querySelector('[data-wh-immersive-source]');
+    dynamicSource.firstChild.data = 'An updated anonymous paragraph.';
+    await until(() => translations(dynamicSource)[0]?.textContent === 'Translated: An updated anonymous paragraph.',
+      'Anonymous paragraph edits were not translated');
+    assert(dynamicSource.querySelectorAll('[data-wh-immersive-source]').length === 0, 'Generated sources were nested repeatedly');
+
+    if (new URLSearchParams(location.search).has('preview')) {
+      byId('status').textContent = 'PASS: mixed paragraphs, long introduction, order, deduplication, dynamic updates, links';
+      window.scrollTo(0, 0);
+      return;
+    }
+    await toggle(false);
+    assert(!document.querySelector('[data-wh-immersive-source], .wh-immersive-block'), 'Stopping left generated elements');
+    assert(originals.every((node, index) => byId('mixed').childNodes[index] === node) &&
+      byId('mixed').childNodes.length === originals.length, 'Original nodes or their order changed');
+    await toggle(true);
+    byId('mixed').scrollIntoView();
+    await until(() => translations(byId('mixed')).length === 3, 'Mixed content did not translate after restart');
+    await toggle(false);
+    byId('status').textContent = 'PASS: mixed paragraphs, long introduction, order, deduplication, dynamic updates, links, cleanup, restart';
+  })().catch(error => { byId('status').textContent = 'FAIL: ' + error.message; });
+</script>
+</html>
